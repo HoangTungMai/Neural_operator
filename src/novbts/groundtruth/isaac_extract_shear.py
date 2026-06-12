@@ -43,6 +43,8 @@ parser.add_argument("--hex-res", type=int, default=-1, help="simulation_hexahedr
 parser.add_argument("--gel-xy", type=float, default=0.10, help="gel footprint x=y (m)")
 parser.add_argument("--gel-z", type=float, default=0.04, help="gel thickness (m)")
 parser.add_argument("--indentor-r", type=float, default=0.02, help="sphere indentor radius (m)")
+parser.add_argument("--mu", type=float, default=0.6, help="friction coeff (gel+indentor); swept for param coverage")
+parser.add_argument("--youngs", type=float, default=1.0e5, help="gel Young's modulus E (Pa); swept for param coverage")
 parser.add_argument("--contact-offset", type=float, default=0.002, help="PhysX contact offset (m); scale to gel")
 parser.add_argument("--dt", type=float, default=0.005, help="sim timestep (s); small gels need small dt (stability ~ size)")
 parser.add_argument("--damping", type=float, default=-1.0, help="vertex_velocity_damping; -1=default. High value suppresses small-gel oscillation")
@@ -220,8 +222,8 @@ def label_mode(shear_mag, mu):
 
 def main():
     rng = np.random.default_rng(args.seed)
-    indentor_r, mu = args.indentor_r, 0.6
-    sim, gel, ind = build_scene(indentor_r=indentor_r, mu=mu)
+    indentor_r, mu = args.indentor_r, args.mu
+    sim, gel, ind = build_scene(youngs=args.youngs, indentor_r=indentor_r, mu=mu)
 
     if args.smoke:
         t0 = time.perf_counter()
@@ -260,7 +262,7 @@ def main():
         rest, disp, top = run_shear_frame(sim, gel, ind, depth, sx, sy, indentor_r)
         solve_times.append(time.perf_counter() - t0)
         m_disp = sample_to_markers(rest[top, :2], disp[top], coords)
-        params.append([0.0, 0.0, depth, indentor_r, sx, sy, mu, 1.0, 0.0])
+        params.append([0.0, 0.0, depth, indentor_r, sx, sy, mu, args.youngs, 0.0])
         disps.append(m_disp.astype(np.float32))
         # mode from the SAMPLED drive ratio g (standard Cattaneo-Mindlin
         # thresholds); shear_mag is a lateral TRAVEL in metres, not a force
