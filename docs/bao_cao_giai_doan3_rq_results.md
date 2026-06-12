@@ -99,6 +99,21 @@ Câu hỏi "lưới mịn có chính xác hơn không" KHÔNG đo bằng Cattane
 
 → Lưới GT thô làm operator **kém ~2.3–3.5× và lệch hướng tiếp tuyến gấp ~2.9×**; bias −22% ăn khớp việc lưới thô đo **hụt** tiếp tuyến (convergence study ~37%, operator bù một phần). Khi GT đủ mịn, operator gần khớp (hướng 12°, bias −5%). **Kết luận: độ phân giải lưới GT là điều kiện cần cho chất lượng operator — production GT phải ≥res-24.** (Lưu ý trung thực: bản smoke 8-frame ban đầu cho hướng-thô 84° ≈ ngẫu nhiên là **artifact mẫu nhỏ**; số robust+paired đúng là 34.8°.)
 
+### Scale-up & chẩn đoán trần độ chính xác (mesh → data → model)
+
+Sau khi chốt res-24, ta dựng tập train **lưới mịn quét tham số**: **2000 frame** trải trên R∈[15,25]mm, μ∈[0.4,0.8], E∈[0.5,2]·10⁵ Pa (50 combo × 40 frame; 1 container/combo để cô lập nhiễu Isaac dài-hạn; generator `isaac_extract_shear` thêm `--mu/--youngs`, lưu E thật vào params). Operator FEM **đa-điểm**: overall **0.146**, tiếp tuyến 0.348, hướng 14.8° (test 400 held-out, đa-điểm — khó hơn 1-điểm nên không so trực tiếp với 0.153).
+
+Để biết trần tiếp tuyến ~0.35 bị giới hạn bởi đâu, ta khảo sát hai trục (cùng test 400):
+
+| Trục khảo sát | Kết quả | Diễn giải |
+|---|---|---|
+| **Lượng data** (train 200→1600) | overall 0.177→0.167→0.155→0.146; tiếp tuyến 0.403→0.348 | **bão hòa** — mỗi lần gấp đôi chỉ mua ~0.01 overall, ~1% tiếp tuyến |
+| **Dung lượng model** (FNO 12/48 → 16/64, 3× params) | overall 0.146→0.151 (không tốt hơn) | **không thiếu dung lượng** |
+
+→ **Chẩn đoán tam giác:** trần tiếp tuyến KHÔNG do thiếu data (đường cong phẳng), KHÔNG do model nhỏ (lớn hơn không giúp) → bị giới hạn bởi **chất lượng GT** (res-24 trường tiếp tuyến mới qua bề dày 1–3 phần tử) hoặc độ khó nội tại của trường tiếp tuyến FEM.
+
+**Hệ quả thực tiễn:** **~2000 frame là điểm ngọt** cho train FEM ở res-24; scale lên 16k (~17h, 1 GPU) bị **chính đường cong scaling bác bỏ** (overall chỉ về ~0.13, tiếp tuyến gần đứng yên). Muốn hạ tiếp tuyến dưới 0.35, đòn bẩy là **GT mịn hơn (res-32, ~2× chi phí/frame)** hoặc **transfer learning** (pretrain analytic-thang-SI → finetune FEM) — KHÔNG phải thêm frame. Tài sản: generator `infra/gen_fem_sweep.sh` (chunk 40, resumable theo số frame trong npz), data `data/fem/shear_fine_swept.npz`.
+
 ## 3b. Framing là quyết định — vì sao headline phải là field→field
 
 Cùng một vật lý, có 2 cách đóng gói input cho mạng, và **chính cách này quyết định FNO thắng hay thua** baseline:
