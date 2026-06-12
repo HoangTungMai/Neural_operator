@@ -182,11 +182,33 @@ Cùng pipeline, đổi cách đặt bài toán, kết quả lật ngược:
 
 Trong param→field, mọi điểm lưới đều nhận đủ 9 params (biết chính xác tâm/độ sâu tiếp xúc) nên MLP chỉ cần khớp công thức cục bộ → không cần operator. Đây là **lý do KHÔNG dùng param→field cho paper**: nó che mất giá trị của operator learning. Ablation modes 12→16 cho thấy low-pass cũng góp phần nhỏ (FNO 0.078→0.073 trong param→field) nhưng không đủ lật ngược — chỉ *framing* mới lật được. Script: `scripts/archive/phase3_field2field.py` (PoC) → `novbts.operator.field2field` (đầy đủ).
 
+## 6c. RQ1–RQ3 trên GT FEM THẬT — đóng Gate 3
+
+Toàn bộ RQ ở trên đứng trên GT **analytic** Hertz–Mindlin (16k, lý tưởng hoá). Gate 3 yêu cầu làm lại trên **vật lý thật**. Ta train+đo lại trên tập **FEM swept 2000 frame** (res-24, quét R/μ/E; `novbts.operator.fem_benchmark` → `runs/phase3_fem/benchmark.json`):
+
+| | analytic GT (16k) | **FEM GT (2000)** |
+|---|---|---|
+| **RQ1** FNO rel L2 | 0.111 | **0.146** |
+| RQ1 MLP rel L2 | 0.743 | 0.328 |
+| **FNO thắng MLP** | 6.7× | **2.24×** |
+| RQ1 hướng tiếp tuyến (FNO) | 3.8° | 14.8° |
+| **slip-F1** (head-a multitask) | 0.985 | **0.904** |
+| **RQ3** FNO vs solver | 1123× (vs 7.2 fps) | **≈23.000×** (vs 0.341 fps) |
+
+**Kết luận chính (đều GIỮ trên vật lý thật):**
+- **Luận điểm phi-cục-bộ giữ vững:** FNO thắng MLP **2.24×** (hướng 35.7°→14.8°). Biên hẹp hơn analytic (6.7×) vì FEM nhiễu/ít lý tưởng + MLP không sụp đổ thảm như trên trường giải tích — nhưng FNO vẫn thắng dứt khoát.
+- **RQ1 per-mode (FNO):** normal 0.123 · stick 0.134 · partial 0.150 · full_slip 0.167 — sai số tăng dần theo slip (đúng kỳ vọng, slip khó hơn).
+- **Slip-F1 head-a = 0.904** (>0.75 — đóng điều kiện Gate 3 trên nhãn thật). Head-b suy biến (normal F1=0) vì sweep g∈[0,1.3] gần như không có frame normal thuần → mất cân bằng lớp, không phải lỗi mô hình.
+- **RQ2 (ngoại suy đuôi tham số, train low-80% → test high-20%):** high-R 1.30×, high-μ 1.29×, high-E 1.29× — tổng quát hóa mượt, nhất quán cả ba trục. (Phạm vi khiêm tốn: ngoại suy *trong hộp* R∈[15,25]mm/μ∈[0.4,0.8]/E∈[0.5,2]e5, chưa phải OOD ngoài-dải vì không sinh FEM ngoài hộp rẻ được.)
+- **RQ3 ≈23.000×** so với solver PhysX-FEM shear thật (0.341 fps = 2.9s/frame) — đây là fidelity-speed thật, lớn hơn nhiều mốc analytic vì solver shear thật chậm hơn hẳn.
+
+→ **Gate 3 đóng trên GT vật lý thật:** FNO là surrogate phi-cục-bộ thắng baseline, phân loại slip đạt ngưỡng, nhanh hơn solver ~4 bậc. (Trần tiếp tuyến 0.146/14.8° là giới hạn GT-fidelity res-24, xem §3d — không phải giới hạn operator.)
+
 ## 7. ⚠️ Vấn đề mở & hạn chế (trung thực)
 
 1. **FNO > MLP đã chốt trong framing field→field** (§4, 6.7×) — đây là headline. Mâu thuẫn cũ (param→field FNO thua) đã được giải thích là **artifact của framing** (§4b) và loại khỏi headline. **Toàn bộ RQ1–RQ3 nay đứng trên field→field.**
-2. **FEM shear — DEADLOCK đã phá** (§3c): lún nông + kéo ngang micro-step + tăng solver iters → method chạy được, có tín hiệu slip thô (tiếp tuyến bão hòa ~0.85mm dù kéo 7.65mm). NHƯNG validation slip định lượng **chưa đứng vững**: lưới deformable thô (~5 node ngang vết tiếp xúc) không đọc được bán kính dính, một điểm vận hành, n=40. Còn lại: mịn lưới + scale + quét tham số.
-3. **Operator chưa train trên FEM** (80 frame: 40 normal + 40 shear, vẫn ít). FEM hiện làm validator + mốc tốc độ; cần scale data FEM để train headline field→field trên FEM (không chỉ Hertz–Mindlin).
+2. **FEM shear — DEADLOCK đã phá** (§3c) + đã mịn lưới (res-24) + scale + quét tham số (§3d, §6c). Còn lại: **trần tiếp tuyến ~0.35 do GT-fidelity res-24** (data/model đã bão hòa — §3d); đòn bẩy là GT res-32 hoặc transfer learning, không phải thêm frame. RQ2 trên FEM mới là ngoại suy *trong hộp*, chưa phải OOD ngoài-dải.
+3. **Operator ĐÃ train trên FEM** (§6c: 2000 frame swept, FNO thắng MLP 2.24×, slip-F1 0.90, nhanh ~23.000× solver thật) → Gate 3 đóng trên vật lý thật. Lưu ý: GT FEM (2000) và analytic (16k) khác thang đơn vị, train riêng — chưa hợp nhất (transfer learning là hướng để analytic bootstrap FEM).
 4. Hertz–Mindlin là half-space tuyến tính ≠ gel thật (lệch ~37% đã đo) — khe hở để Giai đoạn 4 sim-to-real đóng.
 
 ## 8. Quyết định Gate (paper-scale)
@@ -201,4 +223,4 @@ Trong param→field, mọi điểm lưới đều nhận đủ 9 params (biết 
 **Kết luận:** Giai đoạn 3 đạt **proof-of-machinery hoàn chỉnh** — pipeline field→field chạy, **operator thắng baseline 6.7× một cách chính danh**, slip-discontinuity giải quyết trên GT analytic (đóng Gate 3), **FEM shear deadlock đã phá (§3c)** mở đường cho GT slip từ ma sát (hiện mới mức định tính, lưới thô), tốc độ thật vs FEM 1123×. **Việc còn lại trước paper:** (a) mịn lưới deformable + scale data FEM (normal+shear) để có GT slip định lượng, (b) train headline field→field trên FEM thay vì chỉ Hertz–Mindlin.
 
 ## 9. Tài sản (package `novbts` + runs/)
-Mã nguồn dưới `src/novbts/`: `groundtruth/{hertz_mindlin, data_gen, isaac_extract_normal (FEM normal), isaac_extract_shear (FEM shear, phá deadlock)}`, `operator/{`**`field2field` (HEADLINE field→field, RQ1–RQ3)**`, param2field (param→field ablation), eval_rq, fem_train_compare (thô vs mịn)}`, `validation/{validate_gt, validate_shear, compare_shear}`, `models.py`, `report/make_pdf.py`; `infra/{Dockerfile.fem, setup_isaac.sh}`; script chết/PoC ở `scripts/archive/`. Dữ liệu/kết quả: `runs/phase3_f2f_full/results.json` + `fidelity_speed.png` (headline) · `runs/phase3/` (param→field ablation) · `runs/phase3_fem/compare.json` (thô vs mịn) · `data/fem/normal.npz` (normal) · `data/fem/shear_fine.npz` + `shear_coarse.npz` (shear).
+Mã nguồn dưới `src/novbts/`: `groundtruth/{hertz_mindlin, data_gen, isaac_extract_normal (FEM normal), isaac_extract_shear (FEM shear, phá deadlock)}`, `operator/{`**`field2field` (HEADLINE field→field, RQ1–RQ3 analytic)**`, param2field (param→field ablation), eval_rq, fem_train_compare (thô vs mịn), `**`fem_benchmark` (RQ1–RQ3 trên FEM, §6c)**`}`, `validation/{validate_gt, validate_shear, compare_shear}`, `models.py`, `report/make_pdf.py`; `infra/{Dockerfile.fem, setup_isaac.sh}`; script chết/PoC ở `scripts/archive/`. Dữ liệu/kết quả: `runs/phase3_f2f_full/results.json` + `fidelity_speed.png` (headline) · `runs/phase3/` (param→field ablation) · `runs/phase3_fem/compare.json` (thô vs mịn) · `data/fem/normal.npz` (normal) · `data/fem/shear_fine.npz` + `shear_coarse.npz` (shear).
