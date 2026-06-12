@@ -23,3 +23,6 @@ __pycache__/
 
 # Claude Code local/runtime
 .claude/
+
+# transient Isaac progress file (container-written)
+fem_progress.txt
