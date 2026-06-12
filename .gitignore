@@ -1,0 +1,25 @@
+# Virtual environments (4.8G — never track)
+.venv*/
+
+# Data & run outputs (large / regenerable — not version controlled)
+data/
+runs/
+logs/
+
+# Generated reports
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Editor / OS
+.DS_Store
+
+# stray logs anywhere
+*.log
+
+# Claude Code local/runtime
+.claude/

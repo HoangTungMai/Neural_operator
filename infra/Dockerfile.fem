@@ -1,0 +1,12 @@
+# Derived image: isaac-lab-base + properly installed isaaclab core (the base
+# image ships the sub-packages but the core editable install + its deps
+# (flatdict, ...) are missing).  Install core editable to pull dependencies.
+FROM isaac-lab-base:latest
+
+# install isaaclab core (editable) so `import isaaclab` works with all deps
+RUN /isaac-sim/python.sh -m pip install --no-cache-dir \
+        -e /workspace/isaaclab/source/isaaclab \
+    || /isaac-sim/python.sh -m pip install --no-cache-dir flatdict toml hidapi
+
+# sanity: deps importable (does not boot the app)
+RUN /isaac-sim/python.sh -c "import flatdict; print('flatdict OK')"
