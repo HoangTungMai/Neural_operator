@@ -88,6 +88,17 @@ Câu hỏi "lưới mịn có chính xác hơn không" KHÔNG đo bằng Cattane
 
 **TacEx KHÔNG vướng trần này:** gel biến dạng của TacEx dùng **IPC** (`sapienipc.IPCSystem` ở `fem_based`; `UIPC` ở `tacex_uipc`) — **ổn định vô điều kiện**; đường PhysX của TacEx chỉ là gelpad **rigid**. → Nổ ở gel nhỏ/mịn là **đúng cái giá của lựa chọn PhysX deformable native thay IPC/GIPC (đã bỏ TacEx)**. Nếu sau này cần scale sensor mm tuyệt đối ổn định → mass-scaling/giảm DT, hoặc dùng IPC.
 
+**Hệ quả ở mức operator — lưới GT thô có dạy hỏng operator không?** Train field→field (`novbts.operator.fem_train_compare`) trên GT lưới **thô** (default) vs **mịn** (res-24), eval cả hai trên cùng test mịn. Dùng bộ **paired** (`data/fem/shear_{fine,coarse}_paired.npz`, 160 frame seed s43–s46, geometry giống hệt từng dòng → chênh lệch **thuần do độ phân giải lưới**, không lẫn nhiễu phân phối):
+
+| Metric (test mịn) | GT thô → operator | GT mịn → operator |
+|---|---|---|
+| rel L2 tổng | 0.361 | **0.153** (2.35×) |
+| rel L2 tiếp tuyến | 0.779 | **0.223** (3.5×) |
+| sai số hướng | 34.8° | **12.2°** (2.85×) |
+| bias biên độ tiếp tuyến | **−22%** | **−5%** |
+
+→ Lưới GT thô làm operator **kém ~2.3–3.5× và lệch hướng tiếp tuyến gấp ~2.9×**; bias −22% ăn khớp việc lưới thô đo **hụt** tiếp tuyến (convergence study ~37%, operator bù một phần). Khi GT đủ mịn, operator gần khớp (hướng 12°, bias −5%). **Kết luận: độ phân giải lưới GT là điều kiện cần cho chất lượng operator — production GT phải ≥res-24.** (Lưu ý trung thực: bản smoke 8-frame ban đầu cho hướng-thô 84° ≈ ngẫu nhiên là **artifact mẫu nhỏ**; số robust+paired đúng là 34.8°.)
+
 ## 3b. Framing là quyết định — vì sao headline phải là field→field
 
 Cùng một vật lý, có 2 cách đóng gói input cho mạng, và **chính cách này quyết định FNO thắng hay thua** baseline:
