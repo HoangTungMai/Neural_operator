@@ -26,3 +26,4 @@ __pycache__/
 
 # transient Isaac progress file (container-written)
 fem_progress.txt
+convergence.txt

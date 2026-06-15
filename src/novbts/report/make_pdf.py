@@ -99,7 +99,7 @@ def build():
     pdf.set_font("D", "", 11); pdf.set_text_color(*INK)
     _mc(pdf, 6, "Neural operator học trường dịch chuyển marker của VBTS như surrogate tốc độ cao cho RL")
     pdf.set_font("D", "", 9); pdf.set_text_color(*MUT)
-    _mc(pdf, 5, "Ngày: 2026-06-11   ·   Ràng buộc: 1 GPU RTX 2000 Ada 16GB, 15GB RAM   ·   RQ1–RQ3 + vướng mắc kỹ thuật")
+    _mc(pdf, 5, "Ngày: 2026-06-15   ·   Ràng buộc: 1 GPU RTX 2000 Ada 16GB, 15GB RAM   ·   RQ1–RQ3 + FEM Gate 3 (§6c) + so sánh VBTS sim (§6d)")
     pdf.set_text_color(*INK); pdf.ln(3)
 
     # ---- 0 framing ----
@@ -233,6 +233,55 @@ def build():
     ], [70, 50, 54])
     body(pdf, "→ FNO nhanh hơn FEM solver ≈ 1123× (8087/7.2). RQ3 speedup chỉ có nghĩa khi đối chiếu SOLVER CHẬM (FEM), không phải công thức analytic (vốn nhanh hơn cả FNO). Biểu đồ: runs/phase3_f2f_full/fidelity_speed.png.")
 
+    # ---- 6c FEM Gate 3 ----
+    pdf.add_page()
+    h1(pdf, "6c. RQ1–RQ3 trên GT FEM THẬT — đóng Gate 3")
+    body(pdf, "Toàn bộ RQ ở trên đứng trên GT analytic (lý tưởng hoá). Gate 3 yêu cầu làm lại trên VẬT LÝ THẬT. Ta train+đo lại trên tập FEM swept 2000 frame (res-24, quét R/μ/E) qua novbts.operator.fem_benchmark → runs/phase3_fem/benchmark.json.")
+    table(pdf, ["Chỉ số", "analytic GT (16k)", "FEM GT (2000)"], [
+        ["RQ1 FNO rel L2", "0.111", "0.146"],
+        ["RQ1 MLP rel L2", "0.743", "0.328"],
+        ["FNO thắng MLP", "6.7×", "2.24×"],
+        ["RQ1 hướng tiếp tuyến (FNO)", "3.8°", "14.8°"],
+        ["slip-F1 head-a (multitask)", "0.985", "0.904"],
+        ["RQ3 FNO vs solver", "1123× (vs 7.2 fps)", "≈23.000× (vs 0.341 fps)"],
+    ], [62, 56, 56])
+    bullet(pdf, "Luận điểm phi-cục-bộ GIỮ trên vật lý thật: FNO thắng MLP 2.24× (hướng 35.7°→14.8°). Biên hẹp hơn analytic (6.7×) vì FEM nhiễu/ít lý tưởng.")
+    bullet(pdf, "RQ1 per-mode FNO: normal 0.123 · stick 0.134 · partial 0.150 · full_slip 0.167 (sai số tăng dần theo slip).")
+    bullet(pdf, "RQ2 ngoại suy đuôi R/μ/E: ~1.3× cả ba trục (mượt; ngoại suy TRONG hộp, chưa phải OOD ngoài-dải).")
+    bullet(pdf, "RQ3 ≈23.000× so với solver PhysX-FEM shear thật (0.341 fps = 2.9s/frame).")
+    body(pdf, "→ Gate 3 ĐÓNG trên GT vật lý thật: FNO là surrogate phi-cục-bộ thắng baseline, phân loại slip đạt ngưỡng, nhanh hơn solver ~4 bậc.")
+    h2(pdf, "Cứu slip-classifier head-b bằng frame normal thuần")
+    body(pdf, "Head-b ban đầu suy biến (normal F1=0, macro 0.595) vì sweep g∈[0,1.3] chỉ có 3.1% frame normal. Bổ sung 400 frame g=0 (mode normal) span cùng hộp R/μ/E (infra/gen_fem_normal_sweep.sh), merge+shuffle thành 2400 frame (normal 19.3%, data/fem/shear_fine_swept_normaug.npz).")
+    table(pdf, ["Chỉ số", "committed (normal 3.1%)", "normaug (19.3%)"], [
+        ["head-b normal F1", "0.0", "0.851"],
+        ["head-b macro-F1", "0.595", "0.753 (>0.75)"],
+        ["head-a normal F1", "0.769", "0.951"],
+        ["FNO overall rel L2", "0.146", "0.144 (không suy giảm)"],
+        ["FNO thắng MLP", "2.24×", "2.24×"],
+    ], [56, 60, 58])
+    body(pdf, "→ Xác nhận head-b suy biến do MẤT CÂN BẰNG LỚP, không phải lỗi mô hình; regression không suy giảm. Lưu: runs/phase3_fem/benchmark_normaug.json.")
+
+    # ---- 6d VBTS baselines ----
+    pdf.add_page()
+    h1(pdf, "6d. So sánh với mô hình marker của các mô phỏng VBTS tiêu biểu")
+    body(pdf, "Số liệu liên-paper KHÔNG so trực tiếp được (cảm biến khác, đầu ra ảnh RGB vs trường marker của ta). Nên ta cài lại LÕI mô hình chuyển động marker của từng phương pháp rồi fit + đo trên CHÍNH GT FEM (cùng data/split/metric, novbts.operator.vbts_baselines → runs/phase3_fem/vbts_baselines.json).")
+    bullet(pdf, "TACTO (Wang RA-L 2022): động học, KHÔNG ma sát — kéo cứng cả vùng, không stick-slip.")
+    bullet(pdf, "Cattaneo–Mindlin giải tích (vật lý first-principles): Hertz + Cattaneo-Mindlin, hiệu chỉnh affine per-channel (cơ hội công bằng nhất).")
+    bullet(pdf, "Taxim (Si&Yuan RA-L 2022) + FOTS (Zhao 2023): đàn hồi tuyến tính chồng chập = một conv tuyến tính bất biến dịch (không phi tuyến).")
+    bullet(pdf, "MLP per-point: học nhưng cục bộ (cận dưới). FNO (ours): operator phổ phi-cục-bộ.")
+    table(pdf, ["Phương pháp (lõi marker)", "overall", "full", "hướng°", "FNO hơn"], [
+        ["TACTO-style (động học, no friction)", "0.504", "0.625", "65.8", "3.51×"],
+        ["Cattaneo–Mindlin giải tích (calib)", "0.435", "0.604", "39.0", "3.03×"],
+        ["Taxim/FOTS-style (tuyến tính chồng chập)", "0.295", "0.363", "26.2", "2.05×"],
+        ["MLP per-point (cục bộ)", "0.321", "0.467", "33.6", "2.24×"],
+        ["FNO (ours)", "0.144", "0.168", "14.6", "—"],
+    ], [78, 22, 22, 24, 28])
+    bullet(pdf, "TACTO-style sụp trên tiếp tuyến (hướng 65.8°≈ngẫu nhiên): không tái tạo được stick-slip → FNO hơn 3.51×.")
+    bullet(pdf, "Vật lý giải tích kinh điển (Cattaneo–Mindlin) dù đã hiệu chỉnh biên độ chỉ đạt 0.435 — TỆ HƠN cả mô hình tuyến tính fit-data (0.295): affine chỉ chỉnh biên độ, không đổi được hình dạng profile; trường FEM lệch khỏi Hertz–Mindlin lý tưởng. FNO hơn 3.03×.")
+    bullet(pdf, "Taxim/FOTS-style là baseline MẠNH NHẤT (0.295) nhưng FNO vẫn hơn 2.05× vì chuyển stick→partial→full slip là PHI TUYẾN — mô hình tuyến tính không biểu diễn được.")
+    bullet(pdf, "MLP cục bộ tốt ở normal/stick nhưng sụp ở partial/full (cần ngữ cảnh toàn cục). FNO thắng ở MỌI mode, cách biệt lớn nhất ở slip.")
+    body(pdf, "Trung thực: cài lại LÕI marker (không phải renderer quang học đầy đủ); chạy trọng số hiệu-chỉnh-sẵn của bản gốc lên gel FEM của ta = sai cảm biến, KHÔNG công bằng hơn. Mục đích: cô lập giá trị của việc mô hình hóa trường slip phi tuyến/phi-cục-bộ mà các sim VBTS tuyến tính/động học/giải tích không nắm được.")
+
     # ---- 7 obstacles ----
     pdf.add_page()
     h1(pdf, "7. VƯỚNG MẮC KỸ THUẬT (đã gặp & cách xử lý)")
@@ -261,26 +310,27 @@ def build():
     body(pdf, "Bài học vận hành Isaac headless: theo file log mount (không stdout); app.close() treo nên lưu incremental + kill chủ động; 1 container/lúc.")
 
     # ---- 8 open ----
-    h1(pdf, "8. Vấn đề mở (bắt buộc giải trước paper)")
-    bullet(pdf, "FEM shear: DEADLOCK đã phá (mục 3c) → method chạy được + tín hiệu slip thô (tiếp tuyến bão hòa ~0.85mm dù kéo 7.65mm). NHƯNG validation slip ĐỊNH LƯỢNG chưa đứng vững: lưới deformable thô (~5 node ngang vết tiếp xúc), 1 điểm vận hành, n=40. Còn lại: mịn lưới + scale + quét tham số.")
-    bullet(pdf, "Train operator trên FEM quy mô đủ. Hiện 80 frame (40 normal + 40 shear) vẫn ít để train. FEM làm validator + mốc tốc độ; cần scale để train headline field→field trên FEM (không chỉ Hertz–Mindlin).")
-    bullet(pdf, "Slip-F1 0.985 có thể LẠC QUAN: data analytic sinh 4 mode tách bạch rõ; cần kiểm lại trên GT khó (FEM/real).")
+    h1(pdf, "8. Vấn đề mở & hạn chế (trung thực)")
+    bullet(pdf, "ĐÃ ĐÓNG: Gate 3 trên GT FEM thật (§6c — 2000 frame swept, FNO thắng MLP 2.24×, slip-F1 0.90, ~23.000× solver). FEM shear deadlock đã phá (§3c), đã mịn lưới + scale + quét tham số.")
+    bullet(pdf, "Trần tiếp tuyến ~0.146 rel L2 / 14.8° là giới hạn NỘI TẠI (đã thử res-32 + nhiều Fourier modes: KHÔNG hạ trần → bác bỏ giả thuyết GT-fidelity). Đòn bẩy còn lại: đổi biểu diễn đầu vào (lịch sử tiếp xúc, marker mịn hơn) hoặc kiến trúc — không phải mesh.")
+    bullet(pdf, "RQ2 trên FEM mới là ngoại suy TRONG hộp (R∈[15,25]mm, μ∈[0.4,0.8], E∈[0.5,2]e5), chưa phải OOD ngoài-dải (không sinh FEM ngoài hộp rẻ được). flat-geom OOD vẫn 6.2× (trục hình học).")
+    bullet(pdf, "GT FEM (2400) và analytic (16k) khác thang đơn vị, train riêng — chưa hợp nhất (transfer learning là hướng để analytic bootstrap FEM).")
     bullet(pdf, "Hertz–Mindlin là half-space tuyến tính ≠ gel thật (lệch ~37%) — khe hở để Giai đoạn 4 sim-to-real đóng.")
 
     # ---- 9 gate ----
     h1(pdf, "9. Quyết định Gate (paper-scale)")
     table(pdf, ["RQ", "Phán quyết", "Ghi chú"], [
-        ["RQ1 accuracy + slip", "GO", "FNO ~11% dải Gate; slip-F1 0.985 đóng điều kiện Gate 3"],
-        ["RQ1 operator > baseline", "GO", "field→field: FNO 0.111 vs MLP 0.743 (6.7×); param→field chỉ là ablation phản chứng"],
-        ["RQ2 generalization", "một phần", "tốt param OOD (<2×) + res-up; kém geometry (6.2×, cải thiện 3× so param→field)"],
-        ["RQ3 speed", "GO", "FNO ≈ 1123× FEM solver (mốc thật)"],
-    ], [50, 34, 90])
-    body(pdf, "Kết luận: Giai đoạn 3 đạt PROOF-OF-MACHINERY hoàn chỉnh — pipeline field→field chạy, operator THẮNG baseline 6.7× một cách chính danh, slip-discontinuity giải quyết (đóng Gate 3), tốc độ thật vs FEM 1123×. Hai việc bắt buộc trước paper: (a) FEM shear/slip để có GT slip thật, (b) train operator trên FEM ở quy mô đủ.")
+        ["RQ1 accuracy + slip", "GO", "FNO ~11% (analytic) / 0.146 (FEM); slip-F1 0.985/0.904 đóng Gate 3; head-b cứu 0.753"],
+        ["RQ1 operator > baseline", "GO", "field→field FNO thắng MLP 6.7× (analytic) / 2.24× (FEM); hơn cả TACTO/Taxim/FOTS/Cattaneo-Mindlin 2.05–3.51× (§6d)"],
+        ["RQ2 generalization", "một phần", "tốt param OOD (<2×) + res-up; FEM ngoại suy trong-hộp 1.3×; kém geometry (6.2×)"],
+        ["RQ3 speed", "GO", "FNO ≈1123× (analytic solver) / ≈23.000× (FEM shear solver thật)"],
+    ], [48, 30, 96])
+    body(pdf, "Kết luận: Giai đoạn 3 đạt PROOF-OF-MACHINERY hoàn chỉnh + ĐÓNG GATE 3 TRÊN GT VẬT LÝ THẬT (§6c): pipeline field→field chạy, operator thắng baseline chính danh (6.7× analytic / 2.24× FEM) và thắng cả các mô hình marker của mô phỏng VBTS tiêu biểu 2.05–3.51× (§6d), slip-discontinuity giải quyết (head-a 0.90 + head-b cứu 0.75), nhanh hơn solver FEM ~23.000×. Còn lại trước paper: hợp nhất analytic↔FEM (transfer learning), cải thiện flat-geom OOD, task-level validation in-loop.")
 
     # ---- 10 assets ----
     h1(pdf, "10. Tài sản")
-    body(pdf, "src/novbts/: groundtruth/{hertz_mindlin,data_gen,isaac_extract_normal,isaac_extract_shear}.py · operator/{field2field (HEADLINE field→field),param2field (param→field ablation),eval_rq,fem_train_compare}.py · validation/{validate_gt,validate_shear,compare_shear}.py · models.py · report/make_pdf.py · infra/{Dockerfile.fem,setup_isaac.sh}")
-    body(pdf, "runs/phase3_f2f_full/: results.json + fidelity_speed.png (HEADLINE) · runs/phase3/ (param→field ablation) · data/analytic/ · data/fem/normal.npz (normal) · data/fem/shear_fine.npz · data/fem/shear_coarse.npz (mesh comparison)")
+    body(pdf, "src/novbts/: groundtruth/{hertz_mindlin,data_gen,isaac_extract_normal,isaac_extract_shear,aggregate_sweep}.py · operator/{field2field (HEADLINE),param2field (ablation),eval_rq,fem_train_compare,fem_benchmark (§6c),vbts_baselines (§6d)}.py · validation/{validate_gt,validate_shear,compare_shear}.py · models.py · report/make_pdf.py · infra/{Dockerfile.fem,setup_isaac.sh,gen_fem_sweep.sh,gen_fem_normal_sweep.sh}")
+    body(pdf, "runs/phase3_f2f_full/: results.json + fidelity_speed.png (HEADLINE analytic) · runs/phase3_fem/{benchmark.json, benchmark_normaug.json (head-b cứu), vbts_baselines.json (§6d)} · data/fem/{shear_fine_swept.npz, shear_fine_swept_normaug.npz (2400, +400 normal), normal.npz, shear_fine.npz, shear_coarse.npz}")
 
     ensure(DOCS)
     out = str(DOCS / "bao_cao_giai_doan3.pdf")

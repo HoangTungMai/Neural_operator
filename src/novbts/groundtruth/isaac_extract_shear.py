@@ -49,6 +49,8 @@ parser.add_argument("--contact-offset", type=float, default=0.002, help="PhysX c
 parser.add_argument("--dt", type=float, default=0.005, help="sim timestep (s); small gels need small dt (stability ~ size)")
 parser.add_argument("--damping", type=float, default=-1.0, help="vertex_velocity_damping; -1=default. High value suppresses small-gel oscillation")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--gmin", type=float, default=0.0, help="lower bound of sampled drive ratio g")
+parser.add_argument("--gmax", type=float, default=1.3, help="upper bound of sampled drive ratio g; set =gmin=0 for pure-normal (mode 0) frames")
 args = parser.parse_args()
 
 _PROG = "/work/fem_progress.txt"
@@ -254,7 +256,8 @@ def main():
     for i in range(args.frames):
         depth = rng.uniform(0.004, 0.007)
         # drive ratio g spread across stick/partial/full via shear magnitude
-        g = rng.uniform(0.0, 1.3)
+        # (gmin==gmax==0 -> pure-normal frames, mode 0, to balance the slip class)
+        g = rng.uniform(args.gmin, args.gmax)
         shear_mag = g * mu * 0.01            # scale lateral travel (m) by drive ratio
         theta = rng.uniform(0, 2 * np.pi)
         sx, sy = shear_mag * np.cos(theta), shear_mag * np.sin(theta)

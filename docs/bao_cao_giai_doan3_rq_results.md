@@ -198,11 +198,39 @@ Toàn bộ RQ ở trên đứng trên GT **analytic** Hertz–Mindlin (16k, lý 
 **Kết luận chính (đều GIỮ trên vật lý thật):**
 - **Luận điểm phi-cục-bộ giữ vững:** FNO thắng MLP **2.24×** (hướng 35.7°→14.8°). Biên hẹp hơn analytic (6.7×) vì FEM nhiễu/ít lý tưởng + MLP không sụp đổ thảm như trên trường giải tích — nhưng FNO vẫn thắng dứt khoát.
 - **RQ1 per-mode (FNO):** normal 0.123 · stick 0.134 · partial 0.150 · full_slip 0.167 — sai số tăng dần theo slip (đúng kỳ vọng, slip khó hơn).
-- **Slip-F1 head-a = 0.904** (>0.75 — đóng điều kiện Gate 3 trên nhãn thật). Head-b suy biến (normal F1=0) vì sweep g∈[0,1.3] gần như không có frame normal thuần → mất cân bằng lớp, không phải lỗi mô hình.
+- **Slip-F1 head-a = 0.904** (>0.75 — đóng điều kiện Gate 3 trên nhãn thật). Head-b ban đầu suy biến (normal F1=0, macro 0.595) vì sweep g∈[0,1.3] gần như không có frame normal thuần (chỉ 63/2000 = 3.1%) → mất cân bằng lớp, không phải lỗi mô hình.
+  - **Cứu head-b bằng frame normal thuần:** bổ sung **400 frame g=0** (mode normal) span cùng hộp R/μ/E (`infra/gen_fem_normal_sweep.sh`, lateral-steps=2 → ~0.47s/frame), merge+shuffle thành **2400 frame** (normal 3.1%→19.3%, `data/fem/shear_fine_swept_normaug.npz`). Kết quả (`benchmark_normaug.json`): **head-b normal F1 0.0→0.851, macro 0.595→0.753 (vượt 0.75)**; head-a normal F1 cũng tăng 0.769→0.951. Regression không suy giảm (FNO overall 0.146→0.144, vẫn thắng MLP 2.24×; RQ2 ~1.3×; RQ3 23.427×). → **xác nhận head-b suy biến là do mất cân bằng lớp, không phải lỗi mô hình.**
 - **RQ2 (ngoại suy đuôi tham số, train low-80% → test high-20%):** high-R 1.30×, high-μ 1.29×, high-E 1.29× — tổng quát hóa mượt, nhất quán cả ba trục. (Phạm vi khiêm tốn: ngoại suy *trong hộp* R∈[15,25]mm/μ∈[0.4,0.8]/E∈[0.5,2]e5, chưa phải OOD ngoài-dải vì không sinh FEM ngoài hộp rẻ được.)
 - **RQ3 ≈23.000×** so với solver PhysX-FEM shear thật (0.341 fps = 2.9s/frame) — đây là fidelity-speed thật, lớn hơn nhiều mốc analytic vì solver shear thật chậm hơn hẳn.
 
 → **Gate 3 đóng trên GT vật lý thật:** FNO là surrogate phi-cục-bộ thắng baseline, phân loại slip đạt ngưỡng, nhanh hơn solver ~4 bậc. (Trần tiếp tuyến 0.146/14.8° là giới hạn GT-fidelity res-24, xem §3d — không phải giới hạn operator.)
+
+## 6d. So sánh với mô hình marker của các mô phỏng VBTS tiêu biểu
+
+Để biết "công trình của ta tốt tới đâu", ta đối chiếu trực tiếp với **mô hình chuyển động marker** của các mô phỏng cảm biến xúc giác thị giác (VBTS) tiêu biểu. **Số liệu liên-paper KHÔNG so trực tiếp được** (cảm biến khác nhau, đầu ra là ảnh RGB vs trường marker của ta) — nên ta **cài lại lõi mô hình marker** của từng phương pháp rồi **fit + đo trên CHÍNH GT FEM của ta** (cùng data/split/metric, `novbts.operator.vbts_baselines`, `runs/phase3_fem/vbts_baselines.json`):
+
+- **TACTO** (Wang et al., RA-L 2022): mô hình **động học, không ma sát** — marker bám mặt tiếp xúc, tiếp tuyến chỉ là kéo cứng (rigid drag) cả vùng, **không có stick-slip**.
+- **Cattaneo–Mindlin giải tích** (vật lý first-principles, nền của các sim xúc giác phân tích): trường Hertz (pháp tuyến) + Cattaneo–Mindlin (tiếp tuyến partial-slip). Cho nó cơ hội công bằng nhất: **hiệu chỉnh affine per-channel (scale+bias) fit trên train** → cô lập xem *hình dạng* trường giải tích có khớp FEM không.
+- **Taxim** (Si & Yuan, RA-L 2022) + **FOTS** (Zhao et al., 2023): mô hình **đàn hồi tuyến tính chồng chập** (superposition) — bản đồ tuyến tính (Green's function) từ tải tiếp xúc → chuyển vị marker. Ta cài bằng **một conv tuyến tính bất biến dịch** (không phi tuyến).
+- **MLP per-point**: học nhưng **cục bộ** (không ngữ cảnh toàn cục) — cận dưới.
+- **FNO (của ta)**: operator phổ **phi-cục-bộ**.
+
+| Phương pháp (lõi marker) | overall | normal | stick | partial | full | hướng° | params | FNO hơn |
+|---|---|---|---|---|---|---|---|---|
+| TACTO-style (động học, no friction) | 0.504 | 0.440 | 0.432 | 0.524 | 0.625 | 65.8 | 3 | **3.51×** |
+| Cattaneo–Mindlin giải tích (đã hiệu chỉnh) | 0.435 | 0.318 | 0.341 | 0.475 | 0.604 | 39.0 | 6 | **3.03×** |
+| Taxim/FOTS-style (tuyến tính chồng chập) | 0.295 | 0.276 | 0.266 | 0.285 | 0.363 | 26.2 | 14.4K | **2.05×** |
+| MLP per-point (cục bộ) | 0.321 | 0.227 | 0.242 | 0.349 | 0.467 | 33.6 | 134K | 2.24× |
+| **FNO (ours)** | **0.144** | **0.112** | **0.140** | **0.150** | **0.168** | **14.6** | 2.67M | — |
+
+**Đọc kết quả:**
+- **TACTO-style sụp trên tiếp tuyến** (hướng 65.8° ≈ ngẫu nhiên): mô hình không-ma-sát không thể tái tạo trường stick-slip → FNO hơn **3.51×**. (Nó cực rẻ về fps nhưng vô dụng cho slip.)
+- **Vật lý giải tích kinh điển (Cattaneo–Mindlin) — dù đã hiệu chỉnh biên độ — chỉ đạt 0.435, TỆ HƠN cả mô hình tuyến tính fit-data (0.295)**: hiệu chỉnh affine chỉ chỉnh được *biên độ*, không đổi được *hình dạng* profile; trường FEM thật lệch khỏi công thức Hertz–Mindlin lý tưởng (nhất quán với khe ~37% half-space vs gel thật, §7). FNO hơn mô hình vật lý first-principles **3.03×** → operator nắm được cấu trúc trường mà công thức giải tích bỏ sót.
+- **Taxim/FOTS-style là baseline mạnh nhất** (0.295) — đàn hồi tuyến tính bắt được phần lớn trường, **nhưng FNO vẫn hơn 2.05×** vì chuyển stick→partial→full slip là **phi tuyến**, mô hình tuyến tính chồng chập không biểu diễn được. Đây là luận điểm cốt lõi: cái mà neural operator thêm vào so với mô phỏng VBTS nhanh là **phi tuyến + phi cục bộ của slip**.
+- **MLP (cục bộ) tốt ở normal/stick** (0.227/0.242, trường trơn → cục bộ đủ) **nhưng sụp ở partial/full** (0.349/0.467) — đúng kỳ vọng: slip cần ngữ cảnh toàn cục.
+- **FNO thắng ở MỌI mode**, cách biệt lớn nhất ở slip (full 0.168 vs 0.363–0.625 của baseline). → khẳng định đóng góp đúng chỗ: phi-cục-bộ + phi tuyến cho trường tiếp tuyến slip.
+
+⚠️ *Phạm vi trung thực:* đây là cài lại **lõi mô hình marker** của từng mô phỏng (không phải toàn bộ renderer quang học của chúng), fit công bằng trên GT FEM của ta. Chạy **trọng số hiệu-chỉnh-sẵn của bản gốc** lên gel FEM của ta sẽ là *sai cảm biến* (kém một cách vô nghĩa), KHÔNG công bằng hơn — hướng A đúng đắn cho mô hình đã-hiệu-chỉnh là fit *form* của chúng lên data của ta, đúng như đã làm. Mục đích là cô lập **giá trị của việc mô hình hóa trường slip phi tuyến/phi-cục-bộ** mà các mô phỏng VBTS tuyến tính/động học/giải tích không nắm được — không phải bảng xếp hạng fps liên-paper.
 
 ## 7. ⚠️ Vấn đề mở & hạn chế (trung thực)
 
@@ -223,4 +251,4 @@ Toàn bộ RQ ở trên đứng trên GT **analytic** Hertz–Mindlin (16k, lý 
 **Kết luận:** Giai đoạn 3 đạt **proof-of-machinery hoàn chỉnh** — pipeline field→field chạy, **operator thắng baseline 6.7× một cách chính danh**, slip-discontinuity giải quyết trên GT analytic (đóng Gate 3), **FEM shear deadlock đã phá (§3c)** mở đường cho GT slip từ ma sát (hiện mới mức định tính, lưới thô), tốc độ thật vs FEM 1123×. **Việc còn lại trước paper:** (a) mịn lưới deformable + scale data FEM (normal+shear) để có GT slip định lượng, (b) train headline field→field trên FEM thay vì chỉ Hertz–Mindlin.
 
 ## 9. Tài sản (package `novbts` + runs/)
-Mã nguồn dưới `src/novbts/`: `groundtruth/{hertz_mindlin, data_gen, isaac_extract_normal (FEM normal), isaac_extract_shear (FEM shear, phá deadlock)}`, `operator/{`**`field2field` (HEADLINE field→field, RQ1–RQ3 analytic)**`, param2field (param→field ablation), eval_rq, fem_train_compare (thô vs mịn), `**`fem_benchmark` (RQ1–RQ3 trên FEM, §6c)**`}`, `validation/{validate_gt, validate_shear, compare_shear}`, `models.py`, `report/make_pdf.py`; `infra/{Dockerfile.fem, setup_isaac.sh}`; script chết/PoC ở `scripts/archive/`. Dữ liệu/kết quả: `runs/phase3_f2f_full/results.json` + `fidelity_speed.png` (headline) · `runs/phase3/` (param→field ablation) · `runs/phase3_fem/compare.json` (thô vs mịn) · `data/fem/normal.npz` (normal) · `data/fem/shear_fine.npz` + `shear_coarse.npz` (shear).
+Mã nguồn dưới `src/novbts/`: `groundtruth/{hertz_mindlin, data_gen, isaac_extract_normal (FEM normal), isaac_extract_shear (FEM shear, phá deadlock)}`, `operator/{`**`field2field` (HEADLINE field→field, RQ1–RQ3 analytic)**`, param2field (param→field ablation), eval_rq, fem_train_compare (thô vs mịn), `**`fem_benchmark` (RQ1–RQ3 trên FEM, §6c)**`, `**`vbts_baselines` (so với mô hình marker TACTO/Taxim/FOTS, §6d)**`}`, `validation/{validate_gt, validate_shear, compare_shear}`, `models.py`, `report/make_pdf.py`; `infra/{Dockerfile.fem, setup_isaac.sh, gen_fem_sweep.sh, gen_fem_normal_sweep.sh (frame normal cứu head-b)}`; script chết/PoC ở `scripts/archive/`. Dữ liệu/kết quả: `runs/phase3_f2f_full/results.json` + `fidelity_speed.png` (headline) · `runs/phase3/` (param→field ablation) · `runs/phase3_fem/{benchmark.json, benchmark_normaug.json (head-b cứu), vbts_baselines.json (§6d)}` · `data/fem/{shear_fine_swept.npz, shear_fine_swept_normaug.npz (2400, +400 normal), normal.npz, shear_fine.npz, shear_coarse.npz}`.
