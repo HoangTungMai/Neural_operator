@@ -8,5 +8,11 @@ RUN /isaac-sim/python.sh -m pip install --no-cache-dir \
         -e /workspace/isaaclab/source/isaaclab \
     || /isaac-sim/python.sh -m pip install --no-cache-dir flatdict toml hidapi
 
+# Bake the deps Isaac otherwise pip-installs on-demand at runtime (trimesh is
+# needed to build the deformable MeshCuboid; prettytable by isaaclab_tasks).
+# The on-demand install is network-flaky and silently produced empty sweep
+# combos, so install them at build time.
+RUN /isaac-sim/python.sh -m pip install --no-cache-dir trimesh prettytable
+
 # sanity: deps importable (does not boot the app)
-RUN /isaac-sim/python.sh -c "import flatdict; print('flatdict OK')"
+RUN /isaac-sim/python.sh -c "import flatdict, trimesh, prettytable; print('deps OK', trimesh.__version__)"
