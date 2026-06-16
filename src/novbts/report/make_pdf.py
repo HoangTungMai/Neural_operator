@@ -281,6 +281,52 @@ def build():
     bullet(pdf, "Taxim/FOTS-style là baseline MẠNH NHẤT (0.295) nhưng FNO vẫn hơn 2.05× vì chuyển stick→partial→full slip là PHI TUYẾN — mô hình tuyến tính không biểu diễn được.")
     bullet(pdf, "MLP cục bộ tốt ở normal/stick nhưng sụp ở partial/full (cần ngữ cảnh toàn cục). FNO thắng ở MỌI mode, cách biệt lớn nhất ở slip.")
     body(pdf, "Trung thực: cài lại LÕI marker (không phải renderer quang học đầy đủ); chạy trọng số hiệu-chỉnh-sẵn của bản gốc lên gel FEM của ta = sai cảm biến, KHÔNG công bằng hơn. Mục đích: cô lập giá trị của việc mô hình hóa trường slip phi tuyến/phi-cục-bộ mà các sim VBTS tuyến tính/động học/giải tích không nắm được.")
+    h2(pdf, "Kiểm chứng route-A bằng MÃ GỐC (đã clone & đọc)")
+    body(pdf, "Đã đọc trực tiếp mã nguồn để chắc bản tái hiện trùng thuật toán thật: Taxim (superposition.py) = superposition tuyến tính với tensor Green 3x3 bất biến dịch + nnls → đúng là conv tuyến tính (khớp LinearSuperposition). FOTS (marker_calib.py) = dx += coef·(pos−center)·g (tuyến tính theo g). TACTO (renderer.py) = obj_pos += max_deformation·direction (biến dạng động học, không ma sát; khớp TactoKinematic). Bản tái hiện trùng LỚP thuật toán mã gốc, chỉ fit kernel trên GT FEM của ta thay vì calib cảm biến gốc.")
+
+    # ---- 6e advanced architectures ----
+    pdf.add_page()
+    h1(pdf, "6e. FNO có còn thắng các kiến trúc mạng/operator SOTA mới hơn?")
+    body(pdf, "§6d so với mô hình vật lý/tuyến tính. Khắt khe hơn: trong nhóm mạng HỌC hiện đại, FNO có là tốt nhất? Cài thêm cùng data/split/metric (vbts_baselines.py nhóm advanced_neural_architectures):")
+    bullet(pdf, "DeepONet (Lu 2021): branch-trunk, paradigm neural-operator còn lại.")
+    bullet(pdf, "U-Net (2015): CNN encoder-decoder + skip, backbone của nhiều learned tactile sim gần đây.")
+    bullet(pdf, "Galerkin-attention Transformer operator (Cao 2021 / OFormer 2023): họ operator dựa transformer.")
+    table(pdf, ["Kiến trúc", "overall", "full", "hướng°", "params", "FNO hơn"], [
+        ["DeepONet", "0.210", "0.226", "16.5", "1.05M", "1.46×"],
+        ["Galerkin Transformer", "0.210", "0.220", "16.7", "0.30M", "1.46×"],
+        ["U-Net", "0.148", "0.161", "13.4", "0.47M", "1.03×"],
+        ["FNO (ours)", "0.144", "0.168", "14.6", "2.67M", "—"],
+    ], [56, 24, 22, 24, 24, 24])
+    bullet(pdf, "So với mạng SOTA, lợi thế FNO HẸP LẠI (1.03–1.46×) vs 2.05–3.51× của sim VBTS vật lý/tuyến tính → đóng góp thật là 'operator HỌC phi-cục-bộ thắng mô hình vật lý/tuyến tính', KHÔNG phải 'FNO là kiến trúc tối ưu duy nhất'.")
+    bullet(pdf, "U-Net gần NGANG FNO (0.148 vs 0.144, 1.03×) với ít hơn 5.7× params, hướng tiếp tuyến còn tốt hơn (13.4°) → không nên overclaim FNO vượt trội; nên trình bày FNO/U-Net như lớp neural học được trường slip.")
+    bullet(pdf, "DeepONet & Galerkin Transformer đều 0.210 (1.46×) — kém cả FNO lẫn U-Net ở quy mô/data này.")
+
+    # ---- 6f full-physics VBTS sims positioning ----
+    pdf.add_page()
+    h1(pdf, "6f. Định vị so với mô phỏng VBTS VẬT LÝ ĐẦY ĐỦ (DiffTactile, TacIPC)")
+    body(pdf, "Các sim VBTS mới nhất là BỘ GIẢI vật lý độ-trung-thực-cao, KHÔNG phải surrogate — nên KHÔNG nằm trong bảng rel-L2 (sai phạm trù: chúng GIẢI vật lý, không dự đoán từ tham số). Chúng cùng vai trò GT-generator như PhysX-FEM của ta.")
+    bullet(pdf, "DiffTactile (ICLR 2024): vật lý KHẢ VI đầy đủ — elastomer FEM/MLS-MPM, vật thể đa vật liệu, tiếp xúc penalty, optical qua module neural. Khả vi → ID tham số sim + học kỹ năng thao tác.")
+    bullet(pdf, "TacIPC (IEEE RA-L 2024): FEM + Incremental Potential Contact → KHÔNG xuyên lưới/lật phần tử, ổn định số; có rendering + ma sát; đánh giá gồm dự đoán chuyển vị marker.")
+    bullet(pdf, "TacEx (arXiv 2411.04776, 11/2024): framework module TRONG Isaac Sim/Isaac Lab — GIPC (IPC, không xuyên lưới) + Taxim/FOTS cho optics; có env RL. Đúng stack của ta.")
+    bullet(pdf, "Taccel (PKU+UCLA 2025): sim GPU trên NVIDIA Warp/Newton, ABD+IPC → tốc độ + song song quy mô lớn.")
+    table(pdf, ["Hệ", "Loại", "Khả vi", "Tốc độ", "Vai trò"], [
+        ["TACTO 2022", "render động học", "không", "nhanh", "sim ảnh, marker động học"],
+        ["Taxim/FOTS 22-23", "superposition tuyến tính", "không", "nhanh", "marker tuyến tính"],
+        ["Our PhysX-FEM", "vật lý FEM (Isaac Lab)", "không", "chậm 0.34 fps", "sinh GT (hiện dùng)"],
+        ["TacIPC 2024", "vật lý FEM-IPC", "không", "chậm", "GT trung thực cao, ổn định"],
+        ["TacEx 2024", "GIPC+Taxim/FOTS, Isaac Lab", "không", "chục Hz (nặng)", "GT cùng nền ta + optics"],
+        ["Taccel 2025", "ABD+IPC, Warp/Newton", "không", "915FPS×4096 (H100)", "GT throughput cao"],
+        ["DiffTactile 2024", "vật lý MPM/FEM", "CÓ (diff-sim)", "chậm", "GT khả vi, đa vật liệu"],
+        ["Our FNO", "neural operator (học)", "CÓ (neural)", "~8000 fps", "thay solver"],
+    ], [30, 52, 26, 32, 50])
+    bullet(pdf, "Tất cả (DiffTactile/TacIPC/TacEx/Taccel) KHÔNG cạnh tranh với FNO — cùng tầng GT với PhysX-FEM (chậm-nhưng-chính-xác). Đóng góp của ta (surrogate học nhanh ~10^4× ở inference) là TRỰC GIAO.")
+    bullet(pdf, "Chúng BỔ TRỢ: là GT tốt hơn để train FNO. TacIPC/TacEx (đều IPC, không xuyên lưới) giải đúng deadlock xuyên lưới PhysX ta vật lộn (§3c); DiffTactile (khả vi+đa vật liệu) cho data phong phú+ID tham số; Taccel cho throughput lớn.")
+    bullet(pdf, "TacEx là lựa chọn nâng cấp GT TRỰC TIẾP nhất: ngay trong Isaac Lab (stack của ta), GIPC thay PhysX-deformable để hết xuyên lưới. Taccel khi cần sinh data song song khổng lồ.")
+    bullet(pdf, "Chưa chạy chúng trên data của ta (MPM/IPC nặng + đầu ra cảm biến khác); định vị định tính từ paper gốc, không phải số apples-to-apples.")
+    h2(pdf, "TỐC ĐỘ — sửa ngộ nhận (quan trọng cho framing)")
+    body(pdf, "Con số ~23.000× (§6c) là CHỈ so với PhysX-FEM solver chậm, đơn luồng (0.34 fps) -- KHÔNG khái quát. Taccel (915 FPS x 4096 env trên H100) là sim vật lý GPU thực sự nhanh; throughput GỘP của nó VƯỢT FNO. => tốc độ thô KHÔNG phải lợi thế bền của neural operator so với SOTA mới.")
+    bullet(pdf, "Lợi thế bền của FNO là TỔ HỢP, không phải fps gộp: (1) latency/frame cực thấp ~0.125ms (Taccel ~1.1ms low-res -> ~79ms dexterous/env) hợp vòng RL/MPC; (2) khả vi rẻ qua autograd (không adjoint vật lý); (3) phần cứng khiêm tốn (8000 fps trên RTX 2000 16GB vs Taccel cần H100 80GB); (4) mesh-free, chi phí cố định, học từ BẤT KỲ GT nào (kể cả output Taccel/TacEx).")
+    bullet(pdf, "=> KHÔNG tuyên bố 'FNO nhanh nhất'; tuyên bố 'FNO là surrogate latency-thấp / khả-vi / nhẹ-phần-cứng, BỔ TRỢ cho các sim vật lý GPU'.")
 
     # ---- 7 obstacles ----
     pdf.add_page()

@@ -232,10 +232,69 @@ Toàn bộ RQ ở trên đứng trên GT **analytic** Hertz–Mindlin (16k, lý 
 
 ⚠️ *Phạm vi trung thực:* đây là cài lại **lõi mô hình marker** của từng mô phỏng (không phải toàn bộ renderer quang học của chúng), fit công bằng trên GT FEM của ta. Chạy **trọng số hiệu-chỉnh-sẵn của bản gốc** lên gel FEM của ta sẽ là *sai cảm biến* (kém một cách vô nghĩa), KHÔNG công bằng hơn — hướng A đúng đắn cho mô hình đã-hiệu-chỉnh là fit *form* của chúng lên data của ta, đúng như đã làm. Mục đích là cô lập **giá trị của việc mô hình hóa trường slip phi tuyến/phi-cục-bộ** mà các mô phỏng VBTS tuyến tính/động học/giải tích không nắm được — không phải bảng xếp hạng fps liên-paper.
 
+**Kiểm chứng tính trung thực bằng MÃ GỐC (đã clone & đọc):** để chắc bản tái hiện đúng thuật toán thật, đã đọc trực tiếp mã nguồn ba repo:
+- **Taxim** (`MarkerMotionSimulation/compose/superposition.py`): marker motion = **superposition tuyến tính** với tensor ảnh hưởng bất biến dịch `tensorMap[dy,dx]` (Green's function 3×3) tính sẵn từ FEM của 1 cảm biến + `nnls(M,−u)` rồi `np.dot(M,·)`. → đúng là **conv tuyến tính** → khớp `LinearSuperposition`.
+- **FOTS** (`marker_calib/marker_calib.py`): `dx += coef·(pos−center)·g` — **tuyến tính theo g** với hệ số hiệu chỉnh. → cùng họ superposition.
+- **TACTO** (`tacto/renderer.py`): `obj_pos += max_deformation·direction` — **biến dạng động học** theo hình học tiếp xúc, không ma sát. → khớp `TactoKinematic`.
+
+Như vậy bản tái hiện không phải xấp xỉ tuỳ tiện mà **trùng lớp thuật toán của mã gốc**; chỉ khác ở chỗ ta fit kernel/hệ số trên GT FEM của mình thay vì dùng calib của cảm biến gốc (đúng tinh thần route-A).
+
+## 6e. FNO có còn thắng khi đặt cạnh kiến trúc mạng/operator SOTA mới hơn?
+
+§6d so với mô hình *vật lý/tuyến tính* của sim VBTS. Câu hỏi khắt khe hơn: trong nhóm **mạng học hiện đại**, FNO có còn là lựa chọn tốt nhất? Ta cài thêm (cùng data/split/metric, `vbts_baselines.py` nhóm `advanced_neural_architectures`):
+
+- **DeepONet** (Lu et al., Nat. MI 2021): paradigm neural-operator còn lại — branch (mã hóa hàm đầu vào) × trunk (cơ sở theo toạ độ).
+- **U-Net** (2015): CNN encoder–decoder + skip — backbone của hầu hết learned tactile sim gần đây.
+- **Galerkin-attention Transformer operator** (Cao 2021 / OFormer 2023): họ operator dựa transformer (linear attention), SOTA mới.
+
+| Kiến trúc | overall | full | hướng° | params | FNO hơn |
+|---|---|---|---|---|---|
+| DeepONet | 0.210 | 0.226 | 16.5 | 1.05M | 1.46× |
+| Galerkin Transformer | 0.210 | 0.220 | 16.7 | 0.30M | 1.46× |
+| **U-Net** | **0.148** | 0.161 | **13.4** | 0.47M | **1.03×** |
+| **FNO (ours)** | **0.144** | 0.168 | 14.6 | 2.67M | — |
+
+**Đọc kết quả (trung thực, có sắc thái):**
+- So với mạng SOTA, lợi thế FNO **hẹp lại rõ rệt** (1.03–1.46×) so với 2.05–3.51× của các sim VBTS vật lý/tuyến tính. Tức **đóng góp thật là "operator HỌC phi-cục-bộ thắng mô hình vật lý/tuyến tính", KHÔNG phải "FNO là kiến trúc tối ưu duy nhất".**
+- **U-Net gần như NGANG FNO** (0.148 vs 0.144, 1.03×) với ít hơn 5.7× params, thậm chí hướng tiếp tuyến tốt hơn (13.4° vs 14.6°) và full-slip tốt hơn (0.161 vs 0.168). → một CNN dense đủ mạnh là baseline cạnh tranh; không nên overclaim FNO vượt trội.
+- DeepONet & Galerkin Transformer đều 0.210 (1.46×) — kém cả FNO lẫn U-Net ở quy mô/data này (basis toàn cục của DeepONet & linear-attention chưa khớp tốt bằng conv cục bộ + spectral).
+- **Hệ quả định vị paper:** nên trình bày FNO/U-Net như "lớp neural-operator/dense học được trường slip", thắng các sim VBTS giải tích — thay vì tuyên bố FNO độc tôn.
+
+## 6f. Định vị so với mô phỏng VBTS VẬT LÝ ĐẦY ĐỦ mới (DiffTactile, TacIPC)
+
+Các mô phỏng VBTS mới nhất là **bộ giải vật lý độ-trung-thực-cao**, KHÔNG phải surrogate nhanh — nên **không nằm trong bảng rel-L2 §6d/§6e** (đưa vào là *sai phạm trù*: chúng GIẢI vật lý chứ không dự đoán từ tham số tiếp xúc). Chúng cùng **vai trò GT-generator như PhysX-FEM của ta**, đặt ở đầu *trung-thực-cao / chậm*:
+
+- **DiffTactile** (ICLR 2024, Genesis-Embodied-AI): vật lý **khả vi đầy đủ** — elastomer FEM/MLS-MPM, vật thể đa vật liệu (rigid/elastic/elastoplastic/cable), tiếp xúc penalty; optical response qua module neural pixel. Khả vi → tối ưu gradient cho ID tham số sim + học kỹ năng thao tác.
+- **TacIPC** (IEEE RA-L 2024): FEM + **Incremental Potential Contact** → **không xuyên lưới, không lật phần tử**, ổn định số; có rendering + ma sát. Đánh giá trên 4 tác vụ (gồm *dự đoán chuyển vị marker*, *xoay do slip*).
+- **TacEx** (arXiv 2411.04776, 11/2024): framework module **trong chính Isaac Sim/Isaac Lab** — nhúng bộ giải soft-body **GIPC** (IPC, không xuyên lưới) cho vật lý + Taxim/FOTS cho optics; có sẵn env RL (push/lift/balance). ⟵ *đúng stack của ta*.
+- **Taccel** (PKU CoRe + UCLA, 2025): sim GPU dựa **NVIDIA Warp/Newton**, kết hợp **Affine Body Dynamics + IPC** → tốc độ + song song hoá quy mô lớn cho đa-tiếp-xúc.
+
+| Hệ | Loại | Tiếp xúc | Khả vi | Tốc độ | Vai trò |
+|---|---|---|---|---|---|
+| TACTO (2022) | render động học | hình học | không | nhanh | sim ảnh, marker động học |
+| Taxim/FOTS (2022–23) | superposition tuyến tính | — | không | nhanh | marker tuyến tính |
+| **Our PhysX-FEM (GT)** | vật lý FEM (Isaac Lab) | soft contact | không | **chậm 0.34 fps** | sinh GT (hiện dùng) |
+| **TacIPC** (2024) | vật lý FEM-IPC | IPC (no penetration/inversion) | không¹ | chậm | GT trung thực cao, ổn định |
+| **TacEx** (2024) | GIPC + Taxim/FOTS, **Isaac Lab** | GIPC (IPC) | không | chục Hz (soft-body nặng) | GT cùng nền ta + optics |
+| **Taccel** (2025) | ABD+IPC, Warp/Newton | IPC | không | **915 FPS×4096 env (H100)** | GT throughput cao |
+| **DiffTactile** (2024) | vật lý MPM/FEM | penalty | **có (diff-sim)** | chậm | GT khả vi, đa vật liệu |
+| **Our FNO (surrogate)** | neural operator | (ngầm) | **có (neural)** | **rất nhanh ~8000 fps** | thay solver |
+
+¹ TacIPC khả vi qua sim không phải mục tiêu chính (tập trung ổn định + rendering).
+
+**Định vị (trung thực):**
+- DiffTactile/TacIPC/TacEx/Taccel **không cạnh tranh** với FNO — chúng ở **cùng tầng GT** với PhysX-FEM của ta (bộ giải vật lý chậm-nhưng-chính-xác). Đóng góp của ta (surrogate HỌC nhanh ~10⁴× ở inference) là **trực giao**.
+- Thực ra chúng **bổ trợ**: là **GT tốt hơn để train FNO**. TacIPC/TacEx (đều IPC, không xuyên lưới) giải đúng cái **deadlock xuyên lưới PhysX** ta phải vật lộn (§3c); DiffTactile (khả vi + đa vật liệu) cho data phong phú + cho phép ID tham số; Taccel cho throughput sinh data lớn. → hướng nâng cấp GT rõ ràng cho Giai đoạn sau.
+- **TacEx là lựa chọn nâng cấp GT trực tiếp nhất**: sống ngay trong Isaac Lab (stack hiện tại của ta), GIPC thay PhysX-deformable để hết xuyên lưới; Taccel đáng cân nhắc khi cần sinh data song song quy mô khổng lồ (đổi nền sang Warp).
+
+⚠️ **TỐC ĐỘ — sửa ngộ nhận (quan trọng cho framing paper):** con số "~23.000×" (§6c) là **chỉ so với PhysX-FEM solver chậm, đơn luồng (0.34 fps)** — KHÔNG khái quát. **Taccel (915 FPS × 4096 env trên H100) là sim vật lý GPU thực sự nhanh; throughput gộp của nó VƯỢT FNO** → tốc độ thô **không** phải lợi thế bền của neural operator so với SOTA mới. Lợi thế bền của FNO là **tổ hợp**: (1) **latency/frame cực thấp** ~0.125 ms (Taccel ~1.1 ms low-res → ~79 ms dexterous/env) — hợp vòng RL/MPC chặt; (2) **khả vi rẻ qua autograd** (không cần adjoint vật lý); (3) **phần cứng khiêm tốn** (8000 fps trên RTX 2000 16GB vs Taccel cần H100 80GB); (4) **mesh-free, chi phí cố định**, học được từ *bất kỳ GT nào* (kể cả output Taccel/TacEx). → KHÔNG tuyên bố "FNO nhanh nhất"; tuyên bố "FNO là surrogate latency-thấp/khả-vi/nhẹ-phần-cứng, bổ trợ cho các sim vật lý GPU".
+- Sắc thái khả vi: DiffTactile khả vi *qua bộ giải vật lý* (dùng cho ID sim-param / tối ưu quỹ đạo, vẫn chậm); FNO khả vi *qua autograd của mạng* (rẻ, dùng trong vòng RL). Khác mục đích.
+- ⚠️ Ta **chưa chạy** DiffTactile/TacIPC trên data của mình (MPM/IPC nặng + đầu ra cảm biến khác); đây là định vị định tính từ paper gốc, không phải số đo apples-to-apples.
+
 ## 7. ⚠️ Vấn đề mở & hạn chế (trung thực)
 
 1. **FNO > MLP đã chốt trong framing field→field** (§4, 6.7×) — đây là headline. Mâu thuẫn cũ (param→field FNO thua) đã được giải thích là **artifact của framing** (§4b) và loại khỏi headline. **Toàn bộ RQ1–RQ3 nay đứng trên field→field.**
-2. **FEM shear — DEADLOCK đã phá** (§3c) + đã mịn lưới (res-24) + scale + quét tham số (§3d, §6c). Còn lại: **trần tiếp tuyến ~0.35 do GT-fidelity res-24** (data/model đã bão hòa — §3d); đòn bẩy là GT res-32 hoặc transfer learning, không phải thêm frame. RQ2 trên FEM mới là ngoại suy *trong hộp*, chưa phải OOD ngoài-dải.
+2. **FEM shear — DEADLOCK đã phá** (§3c) + đã mịn lưới (res-24) + scale + quét tham số (§3d, §6c). Trần tiếp tuyến ~0.146 relL2 / 14.8° là giới hạn **NỘI TẠI**: đã thử res-32 + tăng Fourier modes → KHÔNG hạ trần (bác bỏ giả thuyết GT-fidelity); đòn bẩy còn lại là **đổi biểu diễn đầu vào / kiến trúc**, không phải mesh hay thêm frame. RQ2 trên FEM mới là ngoại suy *trong hộp*, chưa phải OOD ngoài-dải.
 3. **Operator ĐÃ train trên FEM** (§6c: 2000 frame swept, FNO thắng MLP 2.24×, slip-F1 0.90, nhanh ~23.000× solver thật) → Gate 3 đóng trên vật lý thật. Lưu ý: GT FEM (2000) và analytic (16k) khác thang đơn vị, train riêng — chưa hợp nhất (transfer learning là hướng để analytic bootstrap FEM).
 4. Hertz–Mindlin là half-space tuyến tính ≠ gel thật (lệch ~37% đã đo) — khe hở để Giai đoạn 4 sim-to-real đóng.
 

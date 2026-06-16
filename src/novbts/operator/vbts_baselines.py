@@ -91,6 +91,112 @@ class LinearSuperposition(nn.Module):
         return self.conv(torch.cat([field, sc], 1))
 
 
+# ---------------------------------------------------------------------------
+# Newer / more advanced architectures (is FNO still best among modern nets?)
+# ---------------------------------------------------------------------------
+
+class DeepONetField(nn.Module):
+    """DeepONet (Lu et al., Nat. Mach. Intell. 2021): the principal neural-operator
+    paradigm ALTERNATIVE to FNO. Branch net encodes the input function (contact
+    field + scalars) into p coefficients per channel; trunk net maps query coords
+    to p basis functions; output = <branch, trunk>. Global but via a learned basis
+    rather than Fourier modes."""
+    def __init__(self, side, in_ch=3, out_ch=3, p=128, hidden=256):
+        super().__init__()
+        self.side, self.out_ch, self.p = side, out_ch, p
+        self.branch = nn.Sequential(
+            nn.Linear(in_ch * side * side + 2, hidden), nn.GELU(),
+            nn.Linear(hidden, hidden), nn.GELU(), nn.Linear(hidden, p * out_ch))
+        self.trunk = nn.Sequential(
+            nn.Linear(2, hidden), nn.GELU(), nn.Linear(hidden, hidden), nn.GELU(),
+            nn.Linear(hidden, p), nn.GELU())
+        xs = torch.linspace(-1, 1, side)
+        gy, gx = torch.meshgrid(xs, xs, indexing="ij")
+        self.register_buffer("coords", torch.stack([gx, gy], -1).reshape(-1, 2))
+        self.b0 = nn.Parameter(torch.zeros(out_ch))
+
+    def forward(self, field, scal):
+        B = field.shape[0]
+        coef = self.branch(torch.cat([field.reshape(B, -1), scal], 1)).reshape(B, self.out_ch, self.p)
+        basis = self.trunk(self.coords)                                  # [HW, p]
+        out = torch.einsum("bop,np->bon", coef, basis).reshape(B, self.out_ch, self.side, self.side)
+        return out + self.b0[None, :, None, None]
+
+
+class UNetField(nn.Module):
+    """U-Net (Ronneberger 2015): encoder-decoder CNN with skip connections -- the
+    dense-prediction backbone of most recent LEARNED GelSight/marker simulators.
+    Local convolutions + skips, no spectral global mixing."""
+    def __init__(self, in_ch=3, out_ch=3, w=32):
+        super().__init__()
+        def C(i, o):
+            return nn.Sequential(nn.Conv2d(i, o, 3, padding=1), nn.GELU(),
+                                 nn.Conv2d(o, o, 3, padding=1), nn.GELU())
+        self.e1, self.e2, self.e3 = C(in_ch + 2, w), C(w, w * 2), C(w * 2, w * 4)
+        self.pool = nn.MaxPool2d(2)
+        self.up2, self.d2 = nn.ConvTranspose2d(w * 4, w * 2, 2, 2), C(w * 4, w * 2)
+        self.up1, self.d1 = nn.ConvTranspose2d(w * 2, w, 2, 2), C(w * 2, w)
+        self.head = nn.Conv2d(w, out_ch, 1)
+
+    def forward(self, field, scal):
+        b, c, h, wd = field.shape
+        sc = scal[:, :, None, None].expand(b, scal.shape[1], h, wd)
+        e1 = self.e1(torch.cat([field, sc], 1))
+        e2 = self.e2(self.pool(e1)); e3 = self.e3(self.pool(e2))         # 32 -> 16 -> 8
+        d2 = self.d2(torch.cat([self.up2(e3), e2], 1))
+        d1 = self.d1(torch.cat([self.up1(d2), e1], 1))
+        return self.head(d1)
+
+
+class GalerkinBlock(nn.Module):
+    """Linear (Galerkin-type) attention block: LayerNorm on K,V then Q(KᵀV) -- O(N)
+    in tokens, the operator-learning attention of Cao (2021)."""
+    def __init__(self, dim, heads):
+        super().__init__()
+        self.h, self.dh = heads, dim // heads
+        self.q, self.k, self.v = (nn.Linear(dim, dim) for _ in range(3))
+        self.proj = nn.Linear(dim, dim)
+        self.lnk, self.lnv = nn.LayerNorm(self.dh), nn.LayerNorm(self.dh)
+        self.ln1, self.ln2 = nn.LayerNorm(dim), nn.LayerNorm(dim)
+        self.ff = nn.Sequential(nn.Linear(dim, dim * 2), nn.GELU(), nn.Linear(dim * 2, dim))
+
+    def forward(self, x):
+        B, N, D = x.shape
+        xn = self.ln1(x)
+        q = self.q(xn).view(B, N, self.h, self.dh).transpose(1, 2)
+        k = self.lnk(self.k(xn).view(B, N, self.h, self.dh).transpose(1, 2))
+        v = self.lnv(self.v(xn).view(B, N, self.h, self.dh).transpose(1, 2))
+        kv = torch.einsum("bhnd,bhne->bhde", k, v) / N
+        att = torch.einsum("bhnd,bhde->bhne", q, kv).transpose(1, 2).reshape(B, N, D)
+        x = x + self.proj(att)
+        return x + self.ff(self.ln2(x))
+
+
+class GalerkinOperator(nn.Module):
+    """Galerkin-attention Transformer operator (Cao 2021; OFormer, Li 2023): the
+    transformer-based neural-operator family -- global mixing via linear attention
+    over grid tokens instead of Fourier modes. A newer paradigm than spectral FNO."""
+    def __init__(self, side, in_ch=3, out_ch=3, dim=96, heads=4, layers=4):
+        super().__init__()
+        self.side = side
+        self.inp = nn.Linear(in_ch + 2 + 2, dim)                          # +2 pos +2 scalar
+        self.blocks = nn.ModuleList([GalerkinBlock(dim, heads) for _ in range(layers)])
+        self.out = nn.Linear(dim, out_ch)
+        xs = torch.linspace(-1, 1, side)
+        gy, gx = torch.meshgrid(xs, xs, indexing="ij")
+        self.register_buffer("pos", torch.stack([gx, gy], -1).reshape(-1, 2))
+
+    def forward(self, field, scal):
+        b, c, h, w = field.shape
+        tok = field.permute(0, 2, 3, 1).reshape(b, h * w, c)
+        pos = self.pos[None].expand(b, -1, -1)
+        sc = scal[:, None, :].expand(b, h * w, scal.shape[1])
+        x = self.inp(torch.cat([tok, pos, sc], -1))
+        for blk in self.blocks:
+            x = blk(x)
+        return self.out(x).reshape(b, h, w, -1).permute(0, 3, 1, 2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=str(FEM / "shear_fine_swept_normaug.npz"))
@@ -142,8 +248,18 @@ def main():
          "ours: non-local spectral neural operator"),
     ]
 
+    # newer / more advanced neural architectures (is FNO still best among modern nets?)
+    adv_specs = [
+        ("deeponet", lambda: DeepONetField(side), False,
+         "DeepONet (Lu 2021): branch-trunk operator, the alternative operator paradigm"),
+        ("unet", lambda: UNetField(), False,
+         "U-Net (2015): CNN encoder-decoder w/ skips, backbone of recent learned tactile sims"),
+        ("galerkin_transformer", lambda: GalerkinOperator(side), False,
+         "Galerkin-attention Transformer operator (Cao 2021 / OFormer 2023): transformer-based SOTA"),
+    ]
+
     results = {}
-    for key, ctor, is_mlp, desc in specs:
+    for key, ctor, is_mlp, desc in specs + adv_specs:
         model, secs = fit(ctor(), is_mlp=is_mlp)
         r = evaluate(model, is_mlp=is_mlp)
         r["train_s"] = round(secs, 1)
@@ -195,6 +311,11 @@ def main():
                  "the originals' pre-calibrated weights on our gel would be wrong-sensor, not "
                  "fairer; the fair route-A is fitting each model's form to our data, as done here."),
         "models": results,
+        "groups": {
+            "vbts_sim_marker_models": ["tacto_kinematic", "cattaneo_mindlin_analytic",
+                                       "taxim_fots_linear", "mlp_perpoint", "fno_ours"],
+            "advanced_neural_architectures": ["deeponet", "unet", "galerkin_transformer", "fno_ours"],
+        },
         "fno_advantage_x": {k: round(results[k]["relative_l2"]["overall"] / fno, 2)
                             for k in results if k != "fno_ours"},
     }
@@ -203,18 +324,21 @@ def main():
     out_path = phase_dir / "vbts_baselines.json"
     json.dump(summary, open(out_path, "w"), indent=2)
 
-    print("\n=== VBTS marker-motion bake-off (rel L2 on FEM GT, lower=better) ===")
-    print(f"{'method':20s} {'overall':>8s} {'normal':>7s} {'stick':>7s} {'partial':>8s} "
-          f"{'full':>6s} {'tang°':>6s} {'fps':>7s} {'params':>9s}")
-    order = ["tacto_kinematic", "cattaneo_mindlin_analytic", "taxim_fots_linear", "mlp_perpoint", "fno_ours"]
-    for k in order:
-        r = results[k]; L = r["relative_l2"]
-        print(f"{k:20s} {L['overall']:8.3f} {L['normal']:7.3f} {L['stick']:7.3f} "
-              f"{L['partial_slip']:8.3f} {L['full_slip']:6.3f} "
-              f"{r['tangential_dir_error_deg']:6.1f} {r['throughput_fps']:7.0f} {r['params']:9d}")
+    def print_table(title, order):
+        print(f"\n=== {title} (rel L2 on FEM GT, lower=better) ===")
+        print(f"{'method':22s} {'overall':>8s} {'normal':>7s} {'stick':>7s} {'partial':>8s} "
+              f"{'full':>6s} {'tang°':>6s} {'fps':>7s} {'params':>9s}")
+        for k in order:
+            r = results[k]; L = r["relative_l2"]
+            print(f"{k:22s} {L['overall']:8.3f} {L['normal']:7.3f} {L['stick']:7.3f} "
+                  f"{L['partial_slip']:8.3f} {L['full_slip']:6.3f} "
+                  f"{r['tangential_dir_error_deg']:6.1f} {r['throughput_fps']:7.0f} {r['params']:9d}")
+
+    print_table("§6d VBTS-sim marker-motion models", summary["groups"]["vbts_sim_marker_models"])
+    print_table("§6e newer/advanced neural architectures", summary["groups"]["advanced_neural_architectures"])
     print("\nFNO advantage (their overall rel L2 / ours):")
     for k, v in summary["fno_advantage_x"].items():
-        print(f"  {k:20s} {v:.2f}x")
+        print(f"  {k:22s} {v:.2f}x")
     print(f"\nSaved {out_path}")
 
 
