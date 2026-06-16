@@ -4,7 +4,13 @@
 The FEM trajectory (disp_traj, from PhysX) is the GT loading sequence. The FNO predicts
 the quasi-static field at each load fraction by feeding the lateral waypoint at that step
 (path_xy(f) for the frame's load mode) as the shear input. Renders both through the
-marker-dot sensor as a 2-panel animation (GT | FNO) and reports the per-step tracking error.
+marker-dot sensor as a 2-panel animation (GT | FNO) and reports the per-step error in
+TWO yardsticks:
+  - field rel-L2 (physics-space, legacy);
+  - sensor-space marker-flow metrics -- EPE (px), flow direction error (deg), cosine --
+    the standard tracking metrics, reported against the marker pitch and the render's
+    tracking floor so the px error is interpretable and directly comparable to a real
+    sensor later. (A realistic non-zero floor needs camera noise: Phase 6b.)
 
   python -m novbts.sensor.temporal_compare --data data/fem/traj_mix/fem_gt_shear.npz
 """
@@ -20,7 +26,7 @@ from novbts.operator.field2field import (
 from novbts.operator.fem_benchmark import load, norm_from
 from novbts.sensor.markercam import (
     PinholeCamera, deformed_marker_xyz, render_dots, sample_field_to_markers,
-    sensor_marker_grid_pixel_even, marker_half_extent,
+    sensor_marker_grid_pixel_even, marker_half_extent, track_flow_image,
 )
 from novbts.paths import FEM, RUNS, ensure
 
@@ -35,6 +41,30 @@ def path_xy(f, sx, sy, mode):
         s = 1.5 * (f / 0.66) if f <= 0.66 else 1.5 - 0.5 * ((f - 0.66) / 0.34)
         return sx * s, sy * s
     return sx * f, sy * f
+
+
+def flow_metrics(flow_gt, flow_fno, mag_thresh):
+    """Sensor-space marker-flow metrics, FNO vs FEM GT (both [m,2] pixel flow).
+
+      EPE  : end-point error ‖flow_fno - flow_gt‖ averaged over markers (px) -- the
+             standard optical-flow / marker-tracking yardstick, directly comparable to a
+             real sensor's tracked flow.
+      dir  : mean angle between GT and FNO flow vectors (deg), over markers that actually
+             move (>mag_thresh) -- slip direction is what a tactile controller reads.
+      cos  : mean cosine similarity of the flow vectors over the same moving markers.
+    """
+    epe = float(torch.linalg.norm(flow_fno - flow_gt, dim=-1).mean())
+    gt_mag = torch.linalg.norm(flow_gt, dim=-1)
+    fn_mag = torch.linalg.norm(flow_fno, dim=-1)
+    sel = gt_mag > mag_thresh
+    if sel.any():
+        cos = ((flow_gt[sel] * flow_fno[sel]).sum(-1)
+               / (gt_mag[sel] * fn_mag[sel] + 1e-9)).clamp(-1, 1)
+        ang = float(torch.rad2deg(torch.arccos(cos)).mean())
+        cosm = float(cos.mean())
+    else:
+        ang, cosm = float("nan"), float("nan")
+    return {"epe_px": epe, "dir_deg": ang, "cos": cosm, "gt_mag_px": float(gt_mag.mean())}
 
 
 def main():
@@ -89,6 +119,24 @@ def main():
     pix_rest = cam.project(deformed_marker_xyz(sensor_t, torch.zeros(1, m, 3, device=DEV)))
     render_kw = dict(background=args.background, contrast=args.contrast, polarity="dark", saturate=True)
 
+    # ---- sensor reference scales (to interpret the px errors below) ----
+    # marker pitch: median nearest-neighbour rest spacing in pixels
+    dmat = torch.cdist(pix_rest[0], pix_rest[0]).fill_diagonal_(float("inf"))
+    pitch_px = float(dmat.min(dim=1).values.median())
+    # tracking floor: re-detect the UNDEFORMED markers by image centroid -> the sensor's
+    # own readout noise floor (sub-pixel quantisation); errors below this are meaningless.
+    rest_img = render_dots(pix_rest, args.px, args.px, args.sigma, **render_kw)
+    tracked_rest = track_flow_image(rest_img, pix_rest, win=3, dark=True)
+    floor_px = float(torch.linalg.norm(tracked_rest - pix_rest, dim=-1).mean())
+    # noiseless symmetric dots -> centroid is sub-pixel-exact, so the floor is ~0; the
+    # meaningful reference scale is then the marker pitch. A realistic floor needs camera
+    # noise / blur / dot overlap (Phase 6b realism). Report EPE as a fraction of pitch.
+    floor_meaningful = floor_px > 0.05
+    mag_thresh = max(0.3, 0.1 * pitch_px)
+    floor_str = f"{floor_px:.2f}px" if floor_meaningful else f"{floor_px:.3f}px (noiseless render: sub-pixel-exact)"
+    print(f"sensor scales: marker pitch={pitch_px:.2f}px  tracking floor={floor_str}  "
+          f"(dir/cos over markers moving >{mag_thresh:.2f}px)")
+
     def field_to_pix(disp_MC):
         """disp [M,3] (dense) -> sensor pixel positions [m,2]."""
         fld = torch.as_tensor(disp_MC, device=DEV, dtype=torch.float32).view(1, side, side, 3).permute(0, 3, 1, 2)
@@ -114,23 +162,55 @@ def main():
             picks.append((lmid, int(idx[np.argmax(smag[idx])])))
     print("episodes:", {LOAD_MODES[l]: fi for l, fi in picks})
 
-    # ---- per-snapshot tracking error (dense field GT vs FNO), per mode ----
-    per_mode_rel = {}
+    # ---- per-snapshot error, per mode: field rel-L2 (physics) + sensor-space px metrics ----
+    per_mode_rel = {}            # field-space rel-L2 (legacy yardstick)
+    per_mode_sensor = {}         # sensor-space: epe_px / dir_deg / cos per step
     for lmid, fi in picks:
         sx_t, sy_t = float(params[fi, 4]), float(params[fi, 5]); lm = LOAD_MODES[lmid]
-        rl = []
+        rl, sens = [], []
         for t in range(T):
             wx, wy = path_xy(float(fracs[t]), sx_t, sy_t, lm)
-            rl.append(float(np.linalg.norm(fno_disp(params[fi], wx, wy) - traj[fi, t])
+            fno_d = fno_disp(params[fi], wx, wy)
+            rl.append(float(np.linalg.norm(fno_d - traj[fi, t])
                             / (np.linalg.norm(traj[fi, t]) + 1e-9)))
+            flow_gt = field_to_pix(traj[fi, t]) - pix_rest[0]
+            flow_fno = field_to_pix(fno_d) - pix_rest[0]
+            sens.append(flow_metrics(flow_gt, flow_fno, mag_thresh))
         per_mode_rel[lm] = rl
-        print(f"  {lm:7s} frame={fi} per-step rel-L2: " + " ".join(f"{r:.2f}" for r in rl))
+        per_mode_sensor[lm] = sens
+        epe = [s["epe_px"] for s in sens]
+        floor_tag = (f" = {np.mean(epe)/floor_px:.1f}x floor" if floor_meaningful else "")
+        print(f"  {lm:7s} frame={fi}")
+        print(f"      field rel-L2 : " + " ".join(f"{r:.2f}" for r in rl))
+        print(f"      sensor EPE px: " + " ".join(f"{e:.2f}" for e in epe)
+              + f"   (mean {np.mean(epe):.2f}px{floor_tag}, {100*np.mean(epe)/pitch_px:.0f}% of pitch)")
+        print(f"      flow dir deg : " + " ".join(
+            f"{s['dir_deg']:.0f}" if s['dir_deg'] == s['dir_deg'] else "--" for s in sens))
     all_rel = [r for rl in per_mode_rel.values() for r in rl]
+    all_epe = [s["epe_px"] for ss in per_mode_sensor.values() for s in ss]
+    all_dir = [s["dir_deg"] for ss in per_mode_sensor.values() for s in ss if s["dir_deg"] == s["dir_deg"]]
+    all_cos = [s["cos"] for ss in per_mode_sensor.values() for s in ss if s["cos"] == s["cos"]]
+    floor_sum = (f"{np.mean(all_epe)/floor_px:.1f}x tracking floor {floor_px:.2f}px,  "
+                 if floor_meaningful else f"floor sub-pixel (noiseless),  ")
+    print(f"\nSENSOR-SPACE SUMMARY (FNO vs FEM GT marker flow):")
+    print(f"  mean EPE   = {np.mean(all_epe):.2f} px   ({floor_sum}"
+          f"{100*np.mean(all_epe)/pitch_px:.0f}% of marker pitch {pitch_px:.2f}px)")
+    print(f"  mean dir   = {np.mean(all_dir):.1f} deg    mean cos = {np.mean(all_cos):.3f}")
+    print(f"  field rel-L2 (physics) = {np.mean(all_rel):.3f}")
 
     rep = {"data": args.data, "fno_data": args.fno_data,
            "episodes": {LOAD_MODES[l]: fi for l, fi in picks},
            "fracs": fracs.tolist(), "per_mode_rel_l2": per_mode_rel,
-           "mean_rel_l2": float(np.mean(all_rel))}
+           "mean_rel_l2": float(np.mean(all_rel)),
+           "sensor_scales": {"marker_pitch_px": pitch_px, "tracking_floor_px": floor_px,
+                             "dir_cos_mag_thresh_px": mag_thresh},
+           "per_mode_sensor": per_mode_sensor,
+           "sensor_summary": {"mean_epe_px": float(np.mean(all_epe)),
+                              "floor_meaningful": bool(floor_meaningful),
+                              "epe_over_floor": (float(np.mean(all_epe) / floor_px) if floor_meaningful else None),
+                              "epe_pct_of_pitch": float(100 * np.mean(all_epe) / pitch_px),
+                              "mean_dir_deg": float(np.mean(all_dir)),
+                              "mean_cos": float(np.mean(all_cos))}}
 
     phase_dir = RUNS / "phase6"; ensure(phase_dir)
     try:
@@ -182,7 +262,10 @@ def main():
                 wx, wy = path_xy(float(fracs[t]), sx_t, sy_t, lm)
                 panel(axes[2 * r, c], traj[fi, t], (f"{lm} GT\n" if c == 0 else "") + f"f={fracs[t]:.2f}")
                 panel(axes[2 * r + 1, c], fno_disp(params[fi], wx, wy), (f"{lm} FNO\n" if c == 0 else "") + f"f={fracs[t]:.2f}")
-        fig2.suptitle(f"Temporal FEM GT vs FNO per load mode (mean rel-L2={np.mean(all_rel):.2f})", fontsize=11)
+        fig2.suptitle(f"Temporal FEM GT vs FNO per load mode  "
+                      f"(EPE={np.mean(all_epe):.2f}px = {100*np.mean(all_epe)/pitch_px:.0f}% pitch, "
+                      f"dir={np.mean(all_dir):.0f}deg, cos={np.mean(all_cos):.3f}, rel-L2={np.mean(all_rel):.2f})",
+                      fontsize=11)
         fig2.tight_layout(); fig2.savefig(phase_dir / "temporal_gt_vs_fno.png", dpi=120); plt.close(fig2)
         rep["montage"] = str(phase_dir / "temporal_gt_vs_fno.png")
         print(f"saved {phase_dir/'temporal_gt_vs_fno.png'}")
