@@ -103,25 +103,34 @@ def main():
                 (torch.tensor(scal_np, device=DEV) - sm) / sstd) * ostd + om
         return f[0].permute(1, 2, 0).reshape(-1, 3).cpu().numpy()   # [M,3]
 
-    # pick the highest-shear full-slip episode
+    # one representative high-shear episode PER load mode
     smag = np.hypot(params[:, 4], params[:, 5])
-    cand = np.where(mode >= 2)[0]
-    fi = int(cand[np.argmax(smag[cand])]) if len(cand) else int(np.argmax(smag))
-    lm = LOAD_MODES[int(load_mode[fi])]
-    sx_t, sy_t = float(params[fi, 4]), float(params[fi, 5])
-    print(f"episode frame={fi}  load_mode={lm}  |s|={np.hypot(sx_t,sy_t)*1e3:.2f}mm")
+    picks = []
+    for lmid in range(len(LOAD_MODES)):
+        idx = np.where((load_mode == lmid) & (mode >= 2))[0]
+        if len(idx) == 0:
+            idx = np.where(load_mode == lmid)[0]
+        if len(idx):
+            picks.append((lmid, int(idx[np.argmax(smag[idx])])))
+    print("episodes:", {LOAD_MODES[l]: fi for l, fi in picks})
 
-    # ---- per-snapshot tracking error (dense field GT vs FNO) ----
-    rel = []
-    for t in range(T):
-        gt = traj[fi, t]
-        wx, wy = path_xy(float(fracs[t]), sx_t, sy_t, lm)
-        pred = fno_disp(params[fi], wx, wy)
-        rel.append(float(np.linalg.norm(pred - gt) / (np.linalg.norm(gt) + 1e-9)))
-    print("per-step field rel-L2 (FNO vs FEM GT): " + " ".join(f"{r:.2f}" for r in rel))
+    # ---- per-snapshot tracking error (dense field GT vs FNO), per mode ----
+    per_mode_rel = {}
+    for lmid, fi in picks:
+        sx_t, sy_t = float(params[fi, 4]), float(params[fi, 5]); lm = LOAD_MODES[lmid]
+        rl = []
+        for t in range(T):
+            wx, wy = path_xy(float(fracs[t]), sx_t, sy_t, lm)
+            rl.append(float(np.linalg.norm(fno_disp(params[fi], wx, wy) - traj[fi, t])
+                            / (np.linalg.norm(traj[fi, t]) + 1e-9)))
+        per_mode_rel[lm] = rl
+        print(f"  {lm:7s} frame={fi} per-step rel-L2: " + " ".join(f"{r:.2f}" for r in rl))
+    all_rel = [r for rl in per_mode_rel.values() for r in rl]
 
-    rep = {"data": args.data, "fno_data": args.fno_data, "episode": fi, "load_mode": lm,
-           "fracs": fracs.tolist(), "per_step_rel_l2": rel, "mean_rel_l2": float(np.mean(rel))}
+    rep = {"data": args.data, "fno_data": args.fno_data,
+           "episodes": {LOAD_MODES[l]: fi for l, fi in picks},
+           "fracs": fracs.tolist(), "per_mode_rel_l2": per_mode_rel,
+           "mean_rel_l2": float(np.mean(all_rel))}
 
     phase_dir = RUNS / "phase6"; ensure(phase_dir)
     try:
@@ -143,18 +152,18 @@ def main():
             ax.set_aspect("equal", adjustable="box")
             ax.set_xlim(0, args.px); ax.set_ylim(args.px, 0); ax.set_xticks([]); ax.set_yticks([])
 
+        nr = len(picks)
         Tn = (T - 1) * max(1, args.gif_interp) + 1
         frames = []
         for s in np.linspace(0, T - 1, Tn):
-            i0 = int(np.floor(s)); i1 = min(i0 + 1, T - 1); a = float(s - i0)
-            f = s / (T - 1)
-            gt = (1 - a) * traj[fi, i0] + a * traj[fi, i1]
-            wx, wy = path_xy(f, sx_t, sy_t, lm)
-            pred = fno_disp(params[fi], wx, wy)
-            fig, ax = plt.subplots(1, 2, figsize=(7.0, 3.6))
-            panel(ax[0], gt, f"FEM GT   f={f:.2f}")
-            panel(ax[1], pred, f"FNO   f={f:.2f}")
-            fig.suptitle(f"frame {fi}  ({lm})", fontsize=10)
+            i0 = int(np.floor(s)); i1 = min(i0 + 1, T - 1); a = float(s - i0); f = s / (T - 1)
+            fig, axes = plt.subplots(nr, 2, figsize=(7.0, 3.5 * nr), squeeze=False)
+            for r, (lmid, fi) in enumerate(picks):
+                sx_t, sy_t = float(params[fi, 4]), float(params[fi, 5]); lm = LOAD_MODES[lmid]
+                gt = (1 - a) * traj[fi, i0] + a * traj[fi, i1]
+                wx, wy = path_xy(f, sx_t, sy_t, lm)
+                panel(axes[r, 0], gt, f"FEM GT  [{lm}]  f={f:.2f}")
+                panel(axes[r, 1], fno_disp(params[fi], wx, wy), f"FNO  [{lm}]  f={f:.2f}")
             fig.tight_layout(); fig.canvas.draw()
             w, h = fig.canvas.get_width_height()
             buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
@@ -162,17 +171,19 @@ def main():
         frames[0].save(phase_dir / "temporal_gt_vs_fno.gif", save_all=True,
                        append_images=frames[1:], duration=args.gif_ms, loop=0)
         rep["gif"] = str(phase_dir / "temporal_gt_vs_fno.gif")
-        print(f"saved {phase_dir/'temporal_gt_vs_fno.gif'}  ({len(frames)} frames)")
+        print(f"saved {phase_dir/'temporal_gt_vs_fno.gif'}  ({len(frames)} frames, {nr} modes x GT/FNO)")
 
-        # static montage of the snapshots (GT row vs FNO row)
+        # static montage: per mode two rows (GT, FNO) across snapshots
         ncol = min(T, 8); cols = np.linspace(0, T - 1, ncol).round().astype(int)
-        fig2, axes = plt.subplots(2, ncol, figsize=(2.1 * ncol, 4.6), squeeze=False)
-        for c, t in enumerate(cols):
-            wx, wy = path_xy(float(fracs[t]), sx_t, sy_t, lm)
-            panel(axes[0, c], traj[fi, t], (f"FEM GT\n" if c == 0 else "") + f"f={fracs[t]:.2f}")
-            panel(axes[1, c], fno_disp(params[fi], wx, wy), (f"FNO\n" if c == 0 else "") + f"f={fracs[t]:.2f}")
-        fig2.suptitle(f"Temporal GT (FEM) vs FNO -- frame {fi} ({lm}), mean rel-L2={np.mean(rel):.2f}", fontsize=11)
-        fig2.tight_layout(); fig2.savefig(phase_dir / "temporal_gt_vs_fno.png", dpi=130); plt.close(fig2)
+        fig2, axes = plt.subplots(2 * nr, ncol, figsize=(2.1 * ncol, 2.3 * 2 * nr), squeeze=False)
+        for r, (lmid, fi) in enumerate(picks):
+            sx_t, sy_t = float(params[fi, 4]), float(params[fi, 5]); lm = LOAD_MODES[lmid]
+            for c, t in enumerate(cols):
+                wx, wy = path_xy(float(fracs[t]), sx_t, sy_t, lm)
+                panel(axes[2 * r, c], traj[fi, t], (f"{lm} GT\n" if c == 0 else "") + f"f={fracs[t]:.2f}")
+                panel(axes[2 * r + 1, c], fno_disp(params[fi], wx, wy), (f"{lm} FNO\n" if c == 0 else "") + f"f={fracs[t]:.2f}")
+        fig2.suptitle(f"Temporal FEM GT vs FNO per load mode (mean rel-L2={np.mean(all_rel):.2f})", fontsize=11)
+        fig2.tight_layout(); fig2.savefig(phase_dir / "temporal_gt_vs_fno.png", dpi=120); plt.close(fig2)
         rep["montage"] = str(phase_dir / "temporal_gt_vs_fno.png")
         print(f"saved {phase_dir/'temporal_gt_vs_fno.png'}")
     except Exception as e:
