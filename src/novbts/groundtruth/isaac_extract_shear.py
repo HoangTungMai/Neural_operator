@@ -51,6 +51,11 @@ parser.add_argument("--damping", type=float, default=-1.0, help="vertex_velocity
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--gmin", type=float, default=0.0, help="lower bound of sampled drive ratio g")
 parser.add_argument("--gmax", type=float, default=1.3, help="upper bound of sampled drive ratio g; set =gmin=0 for pure-normal (mode 0) frames")
+parser.add_argument("--save-trajectory", action="store_true", help="store the lateral loading PATH as per-step snapshots (temporal/loading-history GT)")
+parser.add_argument("--traj-steps", type=int, default=8, help="number of trajectory snapshots incl normal (f=0) and final (f=1)")
+parser.add_argument("--load-mode", choices=["linear", "ortho", "reverse"], default="linear",
+                    help="lateral loading-path shape; same endpoint, different PATH (for path-dependence)")
+parser.add_argument("--mix-loads", action="store_true", help="randomly pick load-mode per frame (linear/ortho/reverse) -> path-dependent dataset")
 args = parser.parse_args()
 
 _PROG = "/work/fem_progress.txt"
@@ -151,10 +156,34 @@ def sample_to_markers(top_rest_xy, top_disp, coords):
     return top_disp[idx]
 
 
-def run_shear_frame(sim, gel, ind, depth, shear_x, shear_y, indentor_r, verbose=False):
+LOAD_MODES = ["linear", "ortho", "reverse"]
+
+
+def path_xy(f, sx, sy, mode):
+    """Lateral indentor offset at drag fraction f in [0,1]. All modes share the
+    SAME endpoint (sx,sy) at f=1 but take different PATHS, so the final state is
+    genuinely path-dependent (friction hysteresis) -> a real loading-history test.
+      linear : straight ramp 0 -> (sx,sy)
+      ortho  : L-turn (drag x to full, then y) -> history matters at the corner
+      reverse: overshoot to 1.5x then unload back to (sx,sy) -> load-unload hysteresis
+    """
+    if mode == "ortho":
+        if f <= 0.5:
+            return sx * (f / 0.5), 0.0
+        return sx, sy * ((f - 0.5) / 0.5)
+    if mode == "reverse":
+        s = 1.5 * (f / 0.66) if f <= 0.66 else 1.5 - 0.5 * ((f - 0.66) / 0.34)
+        return sx * s, sy * s
+    return sx * f, sy * f
+
+
+def run_shear_frame(sim, gel, ind, depth, shear_x, shear_y, indentor_r, verbose=False,
+                    load_mode="linear", traj_steps=0):
     """Normal indent (shallow) -> settle -> LATERAL drag in tiny increments.
 
-    Returns (rest_pos, disp, top_idx, deadlocked:bool).
+    Returns (rest_pos, disp_final, top_idx, traj) where traj is a list of nodal
+    displacement snapshots [n_nodes,3] along the loading path (empty if traj_steps==0;
+    traj[0] is the pure-normal state at f=0, traj[-1] the final state at f=1).
     Each lateral micro-step is logged; if a step takes pathologically long the
     caller's watchdog (fem_progress.txt stalls) catches the deadlock.
     """
@@ -191,17 +220,26 @@ def run_shear_frame(sim, gel, ind, depth, shear_x, shear_y, indentor_r, verbose=
         pos = gel.data.nodal_pos_w[0].cpu().numpy()
         flog(f"normal settled: peak uz={float((pos-rest_pos)[top,2].min()):.5f}")
 
+    # --- trajectory snapshots: f=0 (normal) + evenly-spaced fractions to f=1 ---
+    snaps = list(np.linspace(0.0, 1.0, traj_steps)) if traj_steps > 0 else []
+    traj, si = [], 0
+    if snaps and snaps[0] <= 1e-9:
+        traj.append((gel.data.nodal_pos_w[0].cpu().numpy() - rest_pos).copy()); si = 1
+
     # --- phase 2: lateral drag in tiny increments (~velocity control) ---
     nlat = args.lateral_steps
     if verbose:
-        flog(f"shear: dragging ({shear_x:.4f},{shear_y:.4f}) over {nlat} micro-steps")
+        flog(f"shear[{load_mode}]: dragging to ({shear_x:.4f},{shear_y:.4f}) over {nlat} micro-steps")
     for k in range(nlat):
         f = (k + 1) / nlat
         t_step = time.perf_counter()
-        set_indentor(cx + shear_x * f, cy + shear_y * f, z_target)
+        wx, wy = path_xy(f, shear_x, shear_y, load_mode)
+        set_indentor(cx + wx, cy + wy, z_target)
         sim.step(); gel.update(DT); ind.update(DT)
         for _ in range(args.lateral_settle):
             sim.step(); gel.update(DT); ind.update(DT)
+        while si < len(snaps) and f + 1e-9 >= snaps[si]:
+            traj.append((gel.data.nodal_pos_w[0].cpu().numpy() - rest_pos).copy()); si += 1
         if verbose and (k % 5 == 0 or k == nlat - 1):
             dtk = time.perf_counter() - t_step
             flog(f"shear micro-step {k+1}/{nlat}  step_time={dtk:.3f}s")
@@ -211,7 +249,7 @@ def run_shear_frame(sim, gel, ind, depth, shear_x, shear_y, indentor_r, verbose=
     if verbose:
         tang = np.linalg.norm(disp[top, :2], axis=1).max()
         flog(f"shear done: max|tang|={tang:.5f}  peak uz={disp[top,2].min():.5f}")
-    return rest_pos, disp, top
+    return rest_pos, disp, top, traj
 
 
 def label_mode(shear_mag, mu):
@@ -229,10 +267,14 @@ def main():
 
     if args.smoke:
         t0 = time.perf_counter()
-        rest, disp, top = run_shear_frame(sim, gel, ind, depth=args.depth,
+        rest, disp, top, traj = run_shear_frame(sim, gel, ind, depth=args.depth,
                                           shear_x=args.shear, shear_y=0.0,
-                                          indentor_r=indentor_r, verbose=True)
+                                          indentor_r=indentor_r, verbose=True,
+                                          load_mode=args.load_mode,
+                                          traj_steps=args.traj_steps if args.save_trajectory else 0)
         dt = time.perf_counter() - t0
+        if traj:
+            print("SMOKE traj frames:", len(traj), "load_mode:", args.load_mode)
         tnorm = np.linalg.norm(disp[top, :2], axis=1)
         tang = float(tnorm.max())
         mean_tang = float(tnorm.mean())          # integral-ish: converges better than pointwise max
@@ -253,6 +295,8 @@ def main():
 
     coords = marker_grid(args.marker_side)
     params, disps, modes, solve_times = [], [], [], []
+    disps_traj, load_mode_ids = [], []
+    traj_steps = args.traj_steps if args.save_trajectory else 0
     for i in range(args.frames):
         depth = rng.uniform(0.004, 0.007)
         # drive ratio g spread across stick/partial/full via shear magnitude
@@ -261,12 +305,18 @@ def main():
         shear_mag = g * mu * 0.01            # scale lateral travel (m) by drive ratio
         theta = rng.uniform(0, 2 * np.pi)
         sx, sy = shear_mag * np.cos(theta), shear_mag * np.sin(theta)
+        lm = LOAD_MODES[int(rng.integers(len(LOAD_MODES)))] if args.mix_loads else args.load_mode
         t0 = time.perf_counter()
-        rest, disp, top = run_shear_frame(sim, gel, ind, depth, sx, sy, indentor_r)
+        rest, disp, top, traj = run_shear_frame(sim, gel, ind, depth, sx, sy, indentor_r,
+                                                load_mode=lm, traj_steps=traj_steps)
         solve_times.append(time.perf_counter() - t0)
         m_disp = sample_to_markers(rest[top, :2], disp[top], coords)
         params.append([0.0, 0.0, depth, indentor_r, sx, sy, mu, args.youngs, 0.0])
         disps.append(m_disp.astype(np.float32))
+        if traj_steps > 0:
+            tm = np.stack([sample_to_markers(rest[top, :2], tf[top], coords) for tf in traj])
+            disps_traj.append(tm.astype(np.float32))
+            load_mode_ids.append(LOAD_MODES.index(lm))
         # mode from the SAMPLED drive ratio g (standard Cattaneo-Mindlin
         # thresholds); shear_mag is a lateral TRAVEL in metres, not a force
         # ratio, so do NOT pass it to label_mode as g.
@@ -282,6 +332,10 @@ def main():
                 mode=np.array(modes, dtype=np.int32),
                 solve_time_s=np.array(solve_times, dtype=np.float32),
                 meta=np.array("gt=physx_deformable_fem_SHEAR; isaac-lab-fem; units=m", dtype="U80"),
+                **({"disp_traj": np.stack(disps_traj).astype(np.float32),
+                    "load_mode": np.array(load_mode_ids, dtype=np.int32),
+                    "traj_fracs": np.linspace(0.0, 1.0, args.traj_steps).astype(np.float32),
+                    "load_mode_names": np.array(",".join(LOAD_MODES))} if traj_steps > 0 else {}),
             )
             flog(f"saved {i+1} frames")
     print(f"SAVED {args.frames} shear frames -> {args.out}/fem_gt_shear.npz")
