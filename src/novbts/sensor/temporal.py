@@ -36,6 +36,8 @@ def main():
     ap.add_argument("--sigma", type=float, default=1.35)
     ap.add_argument("--background", type=float, default=0.72)
     ap.add_argument("--contrast", type=float, default=0.58)
+    ap.add_argument("--gif-interp", type=int, default=4, help="interpolated sub-steps between snapshots (smoother GIF)")
+    ap.add_argument("--gif-ms", type=int, default=120, help="GIF frame duration (ms)")
     args = ap.parse_args()
 
     z = np.load(args.data, allow_pickle=True)
@@ -119,6 +121,35 @@ def main():
         fig2.tight_layout(); fig2.savefig(phase_dir / "temporal_slip_curve.png", dpi=130); plt.close(fig2)
         rep["slip_curve"] = str(phase_dir / "temporal_slip_curve.png")
         print(f"saved {phase_dir/'temporal_slip_curve.png'}")
+
+        # animated GIF: 3 panels (load modes) animating together, interpolated for smoothness
+        from PIL import Image
+        per = {lm: traj_to_pix(fi) for lm, fi in picks}            # each [T,m,2] tensor on DEV
+        Tn = (T - 1) * max(1, args.gif_interp) + 1
+        gif_frames = []
+        for s in np.linspace(0, T - 1, Tn):
+            i0 = int(np.floor(s)); i1 = min(i0 + 1, T - 1); a = float(s - i0)
+            figg, axg = plt.subplots(1, len(picks), figsize=(3.2 * len(picks), 3.5), squeeze=False)
+            for c, (lm, fi) in enumerate(picks):
+                pij = (1 - a) * per[lm][i0] + a * per[lm][i1]       # [m,2]
+                img = render_dots(pij[None], args.px, args.px, args.sigma, **render_kw)[0, 0].cpu().numpy()
+                fl = (pij - pix_rest[0]).cpu().numpy()
+                ax = axg[0, c]
+                ax.imshow(img, **im_kw)
+                ax.quiver(pr[:, 0], pr[:, 1], fl[:, 0], -fl[:, 1],
+                          color="red", scale_units="xy", angles="xy", scale=0.5, width=0.005)
+                ax.set_title(f"{LOAD_MODES[lm]}   f={s/(T-1):.2f}", fontsize=10)
+                ax.set_aspect("equal", adjustable="box")
+                ax.set_xlim(0, args.px); ax.set_ylim(args.px, 0); ax.set_xticks([]); ax.set_yticks([])
+            figg.tight_layout(); figg.canvas.draw()
+            w, h = figg.canvas.get_width_height()
+            buf = np.frombuffer(figg.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+            gif_frames.append(Image.fromarray(buf[..., :3].copy()))
+            plt.close(figg)
+        gif_frames[0].save(phase_dir / "temporal.gif", save_all=True,
+                           append_images=gif_frames[1:], duration=args.gif_ms, loop=0)
+        rep["gif"] = str(phase_dir / "temporal.gif")
+        print(f"saved {phase_dir/'temporal.gif'}  ({len(gif_frames)} frames)")
     except Exception as e:
         rep["plot_error"] = str(e)
         print(f"plot skipped: {e}")
