@@ -42,6 +42,14 @@ parser.add_argument("--solver-iters", type=int, default=30)
 parser.add_argument("--hex-res", type=int, default=-1, help="simulation_hexahedral_resolution; -1=default(coarse)")
 parser.add_argument("--gel-xy", type=float, default=0.10, help="gel footprint x=y (m)")
 parser.add_argument("--gel-z", type=float, default=0.04, help="gel thickness (m)")
+parser.add_argument("--indentor-geom", choices=["sphere", "flat", "cylinder", "mesh"], default="sphere",
+                    help="indentor contact geometry: sphere (curved), flat (square punch, sharp edges), "
+                         "cylinder (round punch, flat face), mesh (arbitrary USD via --indentor-mesh)")
+parser.add_argument("--indentor-mesh", default="", help="USD/OBJ path for --indentor-geom mesh")
+parser.add_argument("--indentor-half-z", type=float, default=-1.0,
+                    help="half-height of flat/cylinder punch (m); default = indentor_r")
+parser.add_argument("--indentor-bottom", type=float, default=-1.0,
+                    help="origin->bottom-contact offset for mesh geom (m); default = indentor_r")
 parser.add_argument("--indentor-r", type=float, default=0.02, help="sphere indentor radius (m)")
 parser.add_argument("--mu", type=float, default=0.6, help="friction coeff (gel+indentor); swept for param coverage")
 parser.add_argument("--youngs", type=float, default=1.0e5, help="gel Young's modulus E (Pa); swept for param coverage")
@@ -85,7 +93,17 @@ MODE_NAMES = ["normal", "stick", "partial_slip", "full_slip"]
 G_STICK, G_PARTIAL, G_FULL = 0.04, 0.48, 1.0
 
 
-def build_scene(youngs=1.0e5, poisson=0.45, indentor_r=0.02, mu=0.6):
+GEOM_CODE = {"sphere": 0, "flat": 1, "cylinder": 2, "mesh": 3}
+
+
+def build_scene(youngs=1.0e5, poisson=0.45, indentor_r=0.02, mu=0.6,
+                geom="sphere", mesh_path="", half_z=-1.0, bottom=-1.0):
+    """Build gel + a kinematic rigid indentor of the requested contact GEOMETRY.
+
+    Returns (sim, gel, ind, bottom_off) where bottom_off is the distance from the
+    indentor origin to its lowest contact surface, so the caller can lower it to the
+    gel top regardless of shape (sphere -> radius, punch -> half-height, mesh -> bbox).
+    """
     flog("build_scene: SimulationContext")
     sim = SimulationContext(sim_utils.SimulationCfg(dt=DT, device="cuda:0"))
     sim_utils.GroundPlaneCfg().func("/World/ground", sim_utils.GroundPlaneCfg())
@@ -107,22 +125,41 @@ def build_scene(youngs=1.0e5, poisson=0.45, indentor_r=0.02, mu=0.6):
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, GEL[2] / 2.0)),
     )
     gel = DeformableObject(gel_cfg)
+
+    # --- indentor geometry (kinematic rigid); bottom_off = origin -> contact surface ---
+    half_z = half_z if half_z > 0 else indentor_r
+    rigid = sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True)
+    coll = sim_utils.CollisionPropertiesCfg()
+    pm = sim_utils.RigidBodyMaterialCfg(static_friction=mu, dynamic_friction=mu)
+    if geom == "sphere":
+        spawn = sim_utils.SphereCfg(radius=indentor_r, rigid_props=rigid, collision_props=coll, physics_material=pm)
+        bottom_off = indentor_r
+    elif geom == "flat":
+        w = 2.0 * indentor_r
+        spawn = sim_utils.CuboidCfg(size=(w, w, 2.0 * half_z), rigid_props=rigid, collision_props=coll, physics_material=pm)
+        bottom_off = half_z
+    elif geom == "cylinder":
+        spawn = sim_utils.CylinderCfg(radius=indentor_r, height=2.0 * half_z, axis="Z",
+                                      rigid_props=rigid, collision_props=coll, physics_material=pm)
+        bottom_off = half_z
+    elif geom == "mesh":
+        if not mesh_path:
+            raise SystemExit("--indentor-geom mesh requires --indentor-mesh <usd/obj path>")
+        spawn = sim_utils.UsdFileCfg(usd_path=mesh_path, rigid_props=rigid, collision_props=coll)
+        bottom_off = bottom if bottom > 0 else indentor_r
+    else:
+        raise SystemExit(f"unknown indentor geom {geom}")
+    flog(f"build_scene: indentor geom={geom} bottom_off={bottom_off:.4f}")
     ind_cfg = RigidObjectCfg(
         prim_path="/World/indentor",
-        spawn=sim_utils.SphereCfg(
-            radius=indentor_r,
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=mu, dynamic_friction=mu),
-        ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, GEL_TOP_Z + indentor_r + 0.01)),
+        spawn=spawn,
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, GEL_TOP_Z + bottom_off + 0.01)),
     )
     ind = RigidObject(ind_cfg)
     flog("build_scene: sim.reset()")
     sim.reset()
     flog("build_scene: ready")
-    return sim, gel, ind
+    return sim, gel, ind, bottom_off
 
 
 def _z_tol(rest_pos):
@@ -177,7 +214,7 @@ def path_xy(f, sx, sy, mode):
     return sx * f, sy * f
 
 
-def run_shear_frame(sim, gel, ind, depth, shear_x, shear_y, indentor_r, verbose=False,
+def run_shear_frame(sim, gel, ind, depth, shear_x, shear_y, bottom_off, verbose=False,
                     load_mode="linear", traj_steps=0):
     """Normal indent (shallow) -> settle -> LATERAL drag in tiny increments.
 
@@ -199,7 +236,7 @@ def run_shear_frame(sim, gel, ind, depth, shear_x, shear_y, indentor_r, verbose=
     gel.write_nodal_kinematic_target_to_sim(kin)
 
     cx, cy = 0.0, 0.0
-    z0 = GEL_TOP_Z + indentor_r
+    z0 = GEL_TOP_Z + bottom_off
     z_target = z0 - depth
 
     def set_indentor(x, y, z):
@@ -263,13 +300,17 @@ def label_mode(shear_mag, mu):
 def main():
     rng = np.random.default_rng(args.seed)
     indentor_r, mu = args.indentor_r, args.mu
-    sim, gel, ind = build_scene(youngs=args.youngs, indentor_r=indentor_r, mu=mu)
+    geom_code = GEOM_CODE[args.indentor_geom]
+    sim, gel, ind, bottom_off = build_scene(
+        youngs=args.youngs, indentor_r=indentor_r, mu=mu, geom=args.indentor_geom,
+        mesh_path=args.indentor_mesh, half_z=args.indentor_half_z, bottom=args.indentor_bottom)
+    print(f"INDENTOR geom={args.indentor_geom} bottom_off={bottom_off:.4f}")
 
     if args.smoke:
         t0 = time.perf_counter()
         rest, disp, top, traj = run_shear_frame(sim, gel, ind, depth=args.depth,
                                           shear_x=args.shear, shear_y=0.0,
-                                          indentor_r=indentor_r, verbose=True,
+                                          bottom_off=bottom_off, verbose=True,
                                           load_mode=args.load_mode,
                                           traj_steps=args.traj_steps if args.save_trajectory else 0)
         dt = time.perf_counter() - t0
@@ -286,7 +327,7 @@ def main():
         # convergence log: append one line (hard-exit below avoids app.close() hang)
         with open("/work/convergence.txt", "a") as f:
             f.write(f"hex_res={args.hex_res} gel_xy={args.gel_xy} gel_z={args.gel_z} "
-                    f"ind_r={args.indentor_r} nodes={rest.shape[0]} top={top.shape[0]} "
+                    f"geom={args.indentor_geom} ind_r={args.indentor_r} nodes={rest.shape[0]} top={top.shape[0]} "
                     f"depth={args.depth} shear={args.shear} max_tang={tang:.6f} "
                     f"mean_tang={mean_tang:.6f} peak_uz={peak_uz:.6f} frame_s={dt:.2f}\n")
             f.flush(); os.fsync(f.fileno())
@@ -307,11 +348,11 @@ def main():
         sx, sy = shear_mag * np.cos(theta), shear_mag * np.sin(theta)
         lm = LOAD_MODES[int(rng.integers(len(LOAD_MODES)))] if args.mix_loads else args.load_mode
         t0 = time.perf_counter()
-        rest, disp, top, traj = run_shear_frame(sim, gel, ind, depth, sx, sy, indentor_r,
+        rest, disp, top, traj = run_shear_frame(sim, gel, ind, depth, sx, sy, bottom_off,
                                                 load_mode=lm, traj_steps=traj_steps)
         solve_times.append(time.perf_counter() - t0)
         m_disp = sample_to_markers(rest[top, :2], disp[top], coords)
-        params.append([0.0, 0.0, depth, indentor_r, sx, sy, mu, args.youngs, 0.0])
+        params.append([0.0, 0.0, depth, indentor_r, sx, sy, mu, args.youngs, float(geom_code)])
         disps.append(m_disp.astype(np.float32))
         if traj_steps > 0:
             tm = np.stack([sample_to_markers(rest[top, :2], tf[top], coords) for tf in traj])
@@ -331,7 +372,9 @@ def main():
                 disp=np.stack(disps).astype(np.float32),
                 mode=np.array(modes, dtype=np.int32),
                 solve_time_s=np.array(solve_times, dtype=np.float32),
-                meta=np.array("gt=physx_deformable_fem_SHEAR; isaac-lab-fem; units=m", dtype="U80"),
+                meta=np.array(f"gt=physx_deformable_fem_SHEAR; isaac-lab-fem; units=m; geom={args.indentor_geom}", dtype="U96"),
+                indentor_geom=np.array(args.indentor_geom),
+                geom_code=np.array(geom_code, dtype=np.int32),
                 **({"disp_traj": np.stack(disps_traj).astype(np.float32),
                     "load_mode": np.array(load_mode_ids, dtype=np.int32),
                     "traj_fracs": np.linspace(0.0, 1.0, args.traj_steps).astype(np.float32),
