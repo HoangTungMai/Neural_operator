@@ -41,9 +41,40 @@ def representative_frames(mode, score, n_per_mode):
         else:
             locs = np.linspace(0.22, 0.86, n_per_mode)
             locs = np.clip(np.round(locs * (len(order) - 1)).astype(int), 0, len(order) - 1)
-            frames = order[locs]
+            # Rounded quantiles can collide when a mode has only slightly more
+            # candidates than requested. Keep frames unique and fill from the
+            # high-score end, where shear/image direction is better defined.
+            unique_locs = list(dict.fromkeys(locs.tolist()))
+            for loc in range(len(order) - 1, -1, -1):
+                if len(unique_locs) >= n_per_mode:
+                    break
+                if loc not in unique_locs:
+                    unique_locs.append(loc)
+            frames = order[np.sort(unique_locs[:n_per_mode])]
         picked.extend((int(f), name) for f in frames)
     return picked
+
+
+def circular_direction_error_deg(recovered_deg, true_deg):
+    """Smallest absolute angular difference, in [0, 180] degrees."""
+    return float(abs((recovered_deg - true_deg + 180.0) % 360.0 - 180.0))
+
+
+def inverse_summary(rows):
+    """Aggregate per-frame image-inversion metrics with population std."""
+    mag_pct = np.asarray([100.0 * row["mag_rel_err"] for row in rows], dtype=np.float64)
+    direction = np.asarray([row["dir_err_deg"] for row in rows], dtype=np.float64)
+
+    def stats(values):
+        if len(values) == 0:
+            return {"mean": None, "std": None}
+        return {"mean": float(values.mean()), "std": float(values.std(ddof=0))}
+
+    return {
+        "n": int(len(rows)),
+        "magnitude_error_pct": stats(mag_pct),
+        "direction_error_deg": stats(direction),
+    }
 
 
 def main():
@@ -74,7 +105,22 @@ def main():
                     help="only train FNO and render GT-vs-FNO comparison, skip image inverse optimization")
     ap.add_argument("--steps", type=int, default=400)
     ap.add_argument("--opt-lr", type=float, default=0.05)
+    ap.add_argument("--inverse-n-per-mode", type=int, default=5,
+                    help="representative image-inverse frames per contact mode")
+    ap.add_argument("--inverse-restarts", type=int, default=8,
+                    help="fixed initialisations per frame; 1 reproduces zero-init behavior")
+    ap.add_argument("--inverse-min-shear-frac", type=float, default=0.01,
+                    help="exclude direction-ill-defined frames below this fraction "
+                         "of the maximum test-set shear")
     args = ap.parse_args()
+    if args.inverse_n_per_mode < 1:
+        ap.error("--inverse-n-per-mode must be at least 1")
+    if args.inverse_restarts < 1:
+        ap.error("--inverse-restarts must be at least 1")
+    if not 0.0 <= args.inverse_min_shear_frac < 1.0:
+        ap.error("--inverse-min-shear-frac must be in [0, 1)")
+    if args.steps < 1:
+        ap.error("--steps must be at least 1")
 
     D = load(args.data)
     side, N, nt = D["side"], D["inp"].shape[0], args.n_test
@@ -211,45 +257,158 @@ def main():
         cand = te[mode[te] >= 2]
     smag = np.hypot(D["params"][cand.cpu().numpy(), 4], D["params"][cand.cpu().numpy(), 5])
     fi = int(cand[int(np.argmax(smag))])
-    sx_t, sy_t = float(D["params"][fi, 4]), float(D["params"][fi, 5])
-    pen, mask, _ = build_input_channels(D["params"][fi], coords, side)
-    pen3, mask1 = pen[None, None], mask[None, None]
-    scal_i = nsc(scal[fi:fi + 1])
-    with torch.no_grad():
-        img_obs = render_dots(disp_to_pix(out[fi:fi + 1]), args.px, args.px, args.sigma,
-                              **render_kw)   # the observed sensor image
-
-    def render_from_action(sx, sy):
-        ch1 = sx * mask1; ch2 = sy * mask1
-        inp3 = torch.cat([pen3, ch1, ch2], 1)
-        field = fno((inp3 - im) / istd, scal_i) * ostd + om
-        return render_dots(disp_to_pix(field), args.px, args.px, args.sigma, **render_kw)
-
     s_abs = float(np.abs(D["params"][:, 4:6]).max())
-    v = torch.zeros(2, device=DEV, requires_grad=True)
-    opt = torch.optim.Adam([v], lr=args.opt_lr * s_abs)
-    if DEV.type == "cuda":
-        torch.cuda.synchronize()
-    t0 = time.perf_counter()
-    for _ in range(args.steps):
-        opt.zero_grad(set_to_none=True)
-        loss = ((render_from_action(v[0], v[1]) - img_obs) ** 2).mean()
-        loss.backward(); opt.step()
-    if DEV.type == "cuda":
-        torch.cuda.synchronize()
-    wall = time.perf_counter() - t0
-    sx_r, sy_r = float(v.detach()[0]), float(v.detach()[1])
-    true = np.array([sx_t, sy_t]); got = np.array([sx_r, sy_r])
-    rel_err = float(np.linalg.norm(got - true) / (np.linalg.norm(true) + 1e-9))
-    mag_t = float(np.hypot(sx_t, sy_t)); ang_t = float(np.degrees(np.arctan2(sy_t, sx_t)))
-    ang_r = float(np.degrees(np.arctan2(sy_r, sx_r)))
+    te_np = te.cpu().numpy()
+    te_mode = mode[te].cpu().numpy()
+    te_smag = np.linalg.norm(D["params"][te_np, 4:6], axis=1)
+    positive_test_shear = te_smag[te_smag > 0.0]
+    restart_radius = float(np.median(positive_test_shear)) if len(positive_test_shear) else s_abs
+    restart_inits = np.zeros((args.inverse_restarts, 2), dtype=np.float32)
+    if args.inverse_restarts > 1:
+        restart_angles = (
+            2.0 * np.pi * np.arange(args.inverse_restarts - 1)
+            / (args.inverse_restarts - 1)
+        )
+        restart_inits[1:, 0] = restart_radius * np.cos(restart_angles)
+        restart_inits[1:, 1] = restart_radius * np.sin(restart_angles)
+
+    def invert_frame(frame_i):
+        sx_t, sy_t = float(D["params"][frame_i, 4]), float(D["params"][frame_i, 5])
+        pen, mask, _ = build_input_channels(D["params"][frame_i], coords, side)
+        pen3 = pen[None, None].expand(args.inverse_restarts, -1, -1, -1)
+        mask1 = mask[None, None]
+        scal_i = nsc(scal[frame_i:frame_i + 1]).expand(args.inverse_restarts, -1)
+        with torch.no_grad():
+            img_obs = render_dots(
+                disp_to_pix(out[frame_i:frame_i + 1]),
+                args.px, args.px, args.sigma, **render_kw)
+
+        def render_from_action(actions):
+            ch1 = actions[:, 0, None, None, None] * mask1
+            ch2 = actions[:, 1, None, None, None] * mask1
+            inp3 = torch.cat([pen3, ch1, ch2], 1)
+            field = fno((inp3 - im) / istd, scal_i) * ostd + om
+            return render_dots(disp_to_pix(field), args.px, args.px, args.sigma, **render_kw)
+
+        v = torch.tensor(restart_inits, device=DEV, requires_grad=True)
+        opt = torch.optim.Adam([v], lr=args.opt_lr * s_abs)
+        if DEV.type == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        for _ in range(args.steps):
+            opt.zero_grad(set_to_none=True)
+            restart_loss = ((render_from_action(v) - img_obs) ** 2).flatten(1).mean(1)
+            restart_loss.sum().backward()
+            opt.step()
+        if DEV.type == "cuda":
+            torch.cuda.synchronize()
+        wall = time.perf_counter() - t0
+
+        all_recovered = v.detach().cpu().numpy().astype(np.float64)
+        restart_losses = restart_loss.detach().cpu().numpy().astype(np.float64)
+        winning_restart_idx = int(np.argmin(restart_losses))
+        recovered = all_recovered[winning_restart_idx]
+        true = np.asarray([sx_t, sy_t], dtype=np.float64)
+        mag_t = float(np.linalg.norm(true))
+        mag_r = float(np.linalg.norm(recovered))
+        ang_t = float(np.degrees(np.arctan2(sy_t, sx_t)))
+        ang_r = float(np.degrees(np.arctan2(recovered[1], recovered[0])))
+        return {
+            "frame": int(frame_i),
+            "mode": MODE_NAMES[int(mode[frame_i])],
+            "true_shear_mm": (true * 1e3).tolist(),
+            "recovered_shear_mm": (recovered * 1e3).tolist(),
+            "true_magnitude_mm": mag_t * 1e3,
+            "recovered_magnitude_mm": mag_r * 1e3,
+            # Preserve the legacy vector-relative metric and add the requested
+            # magnitude-only relative error for the multi-frame aggregate.
+            "rel_err": float(np.linalg.norm(recovered - true) / (mag_t + 1e-9)),
+            "mag_rel_err": float(abs(mag_r - mag_t) / (mag_t + 1e-9)),
+            "dir_err_deg": circular_direction_error_deg(ang_r, ang_t),
+            "final_image_loss": float(restart_losses[winning_restart_idx]),
+            "wall_s": round(wall, 2),
+            "steps": args.steps,
+            "n_restarts": args.inverse_restarts,
+            "winning_restart_idx": winning_restart_idx,
+            "restart_losses": restart_losses.tolist(),
+            "restart_initial_shear_mm": (restart_inits.astype(np.float64) * 1e3).tolist(),
+            "restart_recovered_shear_mm": (all_recovered * 1e3).tolist(),
+        }
+
+    legacy = invert_frame(fi)
+    sx_t, sy_t = legacy["true_shear_mm"]
+    sx_r, sy_r = legacy["recovered_shear_mm"]
+    mag_t = legacy["true_magnitude_mm"]
+    ang_t = float(np.degrees(np.arctan2(sy_t, sx_t)))
 
     print(f"\n=== (2) recover shear from the rendered marker IMAGE (autograd thru render.FNO) ===")
-    print(f"observed frame {fi} ({MODE_NAMES[int(mode[fi])]})  |s|={mag_t*1e3:.3f}mm @ {ang_t:.1f}deg")
-    print(f"true       (sx,sy)=({sx_t*1e3:8.3f},{sy_t*1e3:8.3f}) mm")
-    print(f"recovered  (sx,sy)=({sx_r*1e3:8.3f},{sy_r*1e3:8.3f}) mm   rel_err={rel_err:.3f}  "
-          f"dir_err={abs(ang_r-ang_t):.1f}deg  ({wall:.1f}s)")
-    print(f"final image loss={loss.item():.3e}  (gradients flowed image<-renderer<-FNO<-action)")
+    print(f"observed frame {fi} ({legacy['mode']})  |s|={mag_t:.3f}mm @ {ang_t:.1f}deg")
+    print(f"true       (sx,sy)=({sx_t:8.3f},{sy_t:8.3f}) mm")
+    print(f"recovered  (sx,sy)=({sx_r:8.3f},{sy_r:8.3f}) mm   "
+          f"rel_err={legacy['rel_err']:.3f}  dir_err={legacy['dir_err_deg']:.1f}deg  "
+          f"restart={legacy['winning_restart_idx']}/{legacy['n_restarts'] - 1}  "
+          f"({legacy['wall_s']:.1f}s)")
+    print(f"final image loss={legacy['final_image_loss']:.3e}  "
+          f"(gradients flowed image<-renderer<-FNO<-action)")
+
+    # ===== (3) aggregate image inversion over representative frames per mode =====
+    min_shear = float(args.inverse_min_shear_frac * te_smag.max())
+    eligible_mode = te_mode.copy()
+    eligible_mode[te_smag < min_shear] = -1
+    local_inverse = representative_frames(
+        eligible_mode, te_smag, args.inverse_n_per_mode)
+
+    inverse_started = time.perf_counter()
+    inverse_rows = []
+    for row_i, (local_i, mode_name) in enumerate(local_inverse, start=1):
+        frame_i = int(te_np[local_i])
+        row = invert_frame(frame_i)
+        inverse_rows.append(row)
+        print(f"[inverse {row_i:02d}/{len(local_inverse):02d}] frame={frame_i} "
+              f"mode={mode_name:12s} mag={100.0 * row['mag_rel_err']:6.2f}% "
+              f"dir={row['dir_err_deg']:6.2f}deg "
+              f"win={row['winning_restart_idx']}/{row['n_restarts'] - 1} "
+              f"wall={row['wall_s']:.1f}s")
+    inverse_wall = time.perf_counter() - inverse_started
+
+    overall = inverse_summary(inverse_rows)
+    by_mode = {
+        name: inverse_summary([row for row in inverse_rows if row["mode"] == name])
+        for name in MODE_NAMES
+    }
+    multiframe = {
+        "data": args.data,
+        "dataset_frames": int(N),
+        "train_frames": int(N - nt),
+        "test_frames": int(nt),
+        "device": str(DEV),
+        "epochs": args.epochs,
+        "steps": args.steps,
+        "opt_lr": args.opt_lr,
+        "inverse_n_per_mode_requested": args.inverse_n_per_mode,
+        "inverse_restarts": args.inverse_restarts,
+        "restart_init_radius_mm": restart_radius * 1e3,
+        "restart_init_scheme": "zero plus evenly spaced fixed directions",
+        "inverse_min_shear_frac": args.inverse_min_shear_frac,
+        "inverse_min_shear_mm": min_shear * 1e3,
+        "selection": "representative quantiles 0.22--0.86 by test-frame shear magnitude",
+        "frames": inverse_rows,
+        "overall": overall,
+        "by_mode": by_mode,
+        "inverse_wall_s": round(inverse_wall, 2),
+        "fno_train_wall_s": round(float(secs), 2),
+    }
+
+    print("\n=== (3) multi-frame image inversion: mean +/- population std ===")
+    for label, summary in [("overall", overall), *by_mode.items()]:
+        mag = summary["magnitude_error_pct"]
+        direction = summary["direction_error_deg"]
+        if summary["n"]:
+            print(f"{label:12s} n={summary['n']:2d}  "
+                  f"magnitude={mag['mean']:.2f}+/-{mag['std']:.2f}%  "
+                  f"direction={direction['mean']:.2f}+/-{direction['std']:.2f}deg")
+        else:
+            print(f"{label:12s} n= 0  (no frame above shear threshold)")
 
     rep = {"data": args.data, "px": args.px, "sensor_M": int(sensor_M),
            "sensor_marker_side": args.sensor_marker_side, "marker_placement": args.marker_placement,
@@ -258,16 +417,24 @@ def main():
            "dot_style": {"polarity": args.dot_polarity, "background": args.background,
                          "contrast": args.contrast, "saturate": args.saturate_dots},
            "compat": compat,
-           "inverse": {"frame": fi, "mode": MODE_NAMES[int(mode[fi])],
-                       "true_shear_mm": [sx_t * 1e3, sy_t * 1e3],
-                       "recovered_shear_mm": [sx_r * 1e3, sy_r * 1e3],
-                       "rel_err": rel_err, "dir_err_deg": abs(ang_r - ang_t),
-                       "final_image_loss": float(loss.item()), "wall_s": round(wall, 2),
-                       "steps": args.steps}}
+           "inverse": {"frame": legacy["frame"], "mode": legacy["mode"],
+                       "true_shear_mm": legacy["true_shear_mm"],
+                       "recovered_shear_mm": legacy["recovered_shear_mm"],
+                       "rel_err": legacy["rel_err"], "dir_err_deg": legacy["dir_err_deg"],
+                       "final_image_loss": legacy["final_image_loss"],
+                       "wall_s": legacy["wall_s"], "steps": args.steps,
+                       "n_restarts": legacy["n_restarts"],
+                       "winning_restart_idx": legacy["winning_restart_idx"],
+                       "restart_losses": legacy["restart_losses"],
+                       "restart_initial_shear_mm": legacy["restart_initial_shear_mm"],
+                       "restart_recovered_shear_mm": legacy["restart_recovered_shear_mm"]}}
     json.dump(rep["compat"], open(phase_dir / "sensor_compat.json", "w"), indent=2, default=float)
     json.dump(rep["inverse"], open(phase_dir / "sensor_inverse.json", "w"), indent=2, default=float)
+    json.dump(multiframe, open(phase_dir / "sensor_inverse_multiframe.json", "w"),
+              indent=2, default=float)
     json.dump(compare, open(phase_dir / "sensor_compare.json", "w"), indent=2, default=float)
-    print(f"\nSaved {phase_dir/'sensor_compat.json'} + sensor_compare.json + sensor_inverse.json")
+    print(f"\nSaved {phase_dir/'sensor_compat.json'} + sensor_compare.json + "
+          "sensor_inverse.json + sensor_inverse_multiframe.json")
 
 
 if __name__ == "__main__":

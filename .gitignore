@@ -21,9 +21,24 @@ __pycache__/
 # stray logs anywhere
 *.log
 
+# LaTeX build artifacts (keep .tex/.bib/.bbl; .pdf already ignored above)
+*.aux
+*.out
+*.synctex.gz
+*.blg
+*.toc
+*.fls
+*.fdb_latexmk
+
 # Claude Code local/runtime
 .claude/
 
-# transient Isaac progress file (container-written)
-fem_progress.txt
+# transient Isaac progress files (container-written, all variants)
+fem_progress*.txt
 convergence.txt
+
+# scratch working dir (regenerable subsets, ad-hoc scripts, logs)
+scratchpad/
+
+# Codex handoff scratch area (task/report .md + logs) — not version controlled
+codex/
