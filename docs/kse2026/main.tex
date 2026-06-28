@@ -164,7 +164,7 @@ fidelity in the normal regime. We sweep indenter radius $R$, friction $\mu$, and
 gel stiffness $E$ to produce a structured-tetrahedron, resolution-24 benchmark of
 $N{=}2520$ frames ($2120$ train / $400$ test). A normal-contact top-up balances
 the classes, yielding normal / stick / partial-slip / full-slip counts of
-$490/430/709/891$ (normal $\approx19\%$).
+$430/709/891/490$ (normal $\approx17\%$).
 
 \textbf{Contact-mode taxonomy.} Each frame is labelled
 normal / stick / partial-slip / full-slip by tangential-drive thresholds; we
@@ -236,7 +236,7 @@ needs no new physics: we project the deformed marker positions through a pinhole
 camera placed beneath the membrane and splat each marker as a differentiable
 Gaussian dot (with dark/bright polarity and saturation). The renderer is written in
 torch, so $\mathrm{render}\circ\mathcal{G}_\theta$ is differentiable end-to-end and
-the pixel marker-flow is a faithful image of the in-plane displacement
+the pixel marker-flow images the in-plane displacement wherever the gel shears
 (Sec.~\ref{sec:exp-sensor}).
 
 \subsection{Differentiable control through a frozen operator}\label{sec:method-control}
@@ -380,10 +380,12 @@ target $64\times$ earlier in query count.}
 \end{figure}
 
 \subsection{RQ5: The differentiable sensor and environment}\label{sec:exp-sensor}
-The rendered marker flow is a faithful image of in-plane displacement: the cosine
-between pixel flow and surface displacement is $0.975$, and a render$\to$track
-round trip recovers marker centroids to $1.9$\,px at $160$\,px resolution
-(Fig.~\ref{fig:sensor}). Composing the renderer with the operator, gradient
+The rendered marker flow images in-plane displacement wherever the gel shears: in
+the slip regimes the cosine between pixel flow and surface in-plane displacement is
+$0.85$ (it is undefined under near-zero shear, e.g.\ normal contact, which carries
+no in-plane motion to image), and a render$\to$track round trip recovers marker
+centroids to ${\sim}1.9$\,px in stick, rising to a few pixels under large slip, at
+$160$\,px resolution (Fig.~\ref{fig:sensor}). Composing the renderer with the operator, gradient
 descent on the rendered \emph{image} recovers applied shear to ${\sim}2.9\%$
 magnitude error and ${\sim}0.9^\circ$ direction error across 15 frames from the
 stick, partial-slip, and full-slip regimes. We exclude normal frames because
