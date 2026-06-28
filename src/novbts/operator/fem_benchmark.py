@@ -19,6 +19,7 @@ split could afford -- we cannot cheaply synthesise FEM outside the box.
 import argparse
 import glob
 import json
+import os
 import numpy as np
 import torch
 
@@ -111,7 +112,7 @@ def main():
     train_separate_clf(clf, fno, nin(tri), nsc(trs), trm, ostd, om, args.clf_epochs, args.lr)
     print("[slip clf b] done")
 
-    summary = {"gt": "physx_fem_shear_swept", "device": str(DEV),
+    summary = {"gt": os.path.basename(args.data), "device": str(DEV),
                "train_frames": int(N - nt), "test_frames": nt, "side": side,
                "param_box": {"R_mm": [15, 25], "mu": [0.4, 0.8], "E_Pa": [5e4, 2e5]},
                "models": {}, "RQ1": {}, "RQ2": {}, "RQ3": {}}
