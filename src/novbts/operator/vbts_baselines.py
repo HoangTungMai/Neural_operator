@@ -32,6 +32,7 @@ Usage:
 """
 import argparse
 import json
+import os
 
 import numpy as np
 import torch
@@ -302,7 +303,8 @@ def main():
 
     fno = results["fno_ours"]["relative_l2"]["overall"]
     summary = {
-        "gt": args.data, "side": side, "train_frames": int(N - nt), "test_frames": nt,
+        "gt": os.path.basename(args.data), "gt_path": args.data,
+        "side": side, "train_frames": int(N - nt), "test_frames": nt,
         "note": ("VBTS-simulator marker-motion models reimplemented and fit on our FEM GT. "
                  "TACTO=kinematic/friction-less; Taxim/FOTS=linear elastic superposition; "
                  "cattaneo_mindlin=first-principles analytic contact physics (affine-calibrated); "

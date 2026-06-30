@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Full RQ1-RQ3 + FNO-vs-MLP + slip-F1 benchmark on the PhysX-FEM ground truth.
+"""Full RQ1-RQ3 + FNO-vs-MLP + slip-F1 benchmark on selected FEM ground truth.
 
 Mirrors the analytic field->field benchmark (novbts.operator.field2field.main)
 but trains/evaluates on the swept fine-mesh FEM data
@@ -17,7 +17,6 @@ lower 80%, test on the upper 20%), not the wider out-of-range OOD the analytic
 split could afford -- we cannot cheaply synthesise FEM outside the box.
 """
 import argparse
-import glob
 import json
 import os
 import numpy as np
@@ -38,18 +37,51 @@ def load(npz):
     side = int(round(np.sqrt(coords.shape[0])))
     inp, scal = params_to_fieldinput(params, coords, side)
     out = disp.reshape(-1, side, side, 3).transpose(0, 3, 1, 2).astype(np.float32)
+    meta = {}
+    for key in ("solve_time_s", "n_replicates", "rep_noise_overall", "rep_noise_normal",
+                "rep_noise_tangential", "gel_res", "eps_velocity", "velocity_tol",
+                "d_hat", "contact_resistance", "n_tet_verts", "marker_sampling"):
+        if key in d.files:
+            meta[key] = np.asarray(d[key])
+    if "meta" in d.files:
+        meta["meta"] = str(np.asarray(d["meta"]).item())
     return dict(params=params, inp=torch.tensor(inp), out=torch.tensor(out),
-                scal=torch.tensor(scal), mode=torch.tensor(mode.astype(np.int64)), side=side)
+                scal=torch.tensor(scal), mode=torch.tensor(mode.astype(np.int64)),
+                side=side, provenance=meta)
 
 
-def fem_shear_solver_fps():
-    """Mean PhysX-FEM shear solve time across the swept combos -> fps."""
-    ts = []
-    for f in glob.glob(str(FEM / "sweep" / "combo_*" / "fem_gt_shear.npz")):
-        z = np.load(f, allow_pickle=True)
-        if "solve_time_s" in z.files:
-            ts.append(np.asarray(z["solve_time_s"]))
-    return (1.0 / float(np.concatenate(ts).mean())) if ts else 1.0 / 3.0
+def solver_fps_from_data(D):
+    """Return fair single-solve FPS and averaged-target production FPS."""
+    solve = D["provenance"].get("solve_time_s")
+    if solve is None:
+        fallback = 1.0 / 3.0
+        return fallback, fallback, "fallback_no_solve_time"
+    solve = np.asarray(solve, dtype=np.float64).reshape(-1)
+    reps = D["provenance"].get("n_replicates")
+    if reps is None:
+        mean_s = float(solve.mean())
+        fps = 1.0 / max(mean_s, 1e-12)
+        return fps, fps, "npz_solve_time_s"
+    reps = np.asarray(reps, dtype=np.float64).reshape(-1)
+    if reps.size == 1:
+        reps = np.full_like(solve, reps.item())
+    if reps.shape != solve.shape or np.any(reps <= 0):
+        raise ValueError("n_replicates must align with solve_time_s and be positive")
+    single_mean_s = float((solve / reps).mean())
+    production_mean_s = float(solve.mean())
+    return (
+        1.0 / max(single_mean_s, 1e-12),
+        1.0 / max(production_mean_s, 1e-12),
+        "npz_solve_time_s/n_replicates",
+    )
+
+
+def param_box(params):
+    return {
+        "R_mm": [float(params[:, 3].min() * 1e3), float(params[:, 3].max() * 1e3)],
+        "mu": [float(params[:, 6].min()), float(params[:, 6].max())],
+        "E_Pa": [float(params[:, 7].min()), float(params[:, 7].max())],
+    }
 
 
 def norm_from(inp, out, scal):
@@ -112,9 +144,12 @@ def main():
     train_separate_clf(clf, fno, nin(tri), nsc(trs), trm, ostd, om, args.clf_epochs, args.lr)
     print("[slip clf b] done")
 
-    summary = {"gt": os.path.basename(args.data), "device": str(DEV),
+    summary = {"gt": os.path.basename(args.data), "gt_path": args.data,
+               "gt_provenance": {k: (v.tolist() if hasattr(v, "tolist") else v)
+                                 for k, v in D["provenance"].items()},
+               "device": str(DEV),
                "train_frames": int(N - nt), "test_frames": nt, "side": side,
-               "param_box": {"R_mm": [15, 25], "mu": [0.4, 0.8], "E_Pa": [5e4, 2e5]},
+               "param_box": param_box(D["params"]),
                "models": {}, "RQ1": {}, "RQ2": {}, "RQ3": {}}
 
     def acc(model, idx, is_mlp=False, mt=False):
@@ -168,17 +203,26 @@ def main():
               f"({l2_ood/max(l2_id,1e-9):.2f}x)")
 
     # ===== RQ3: throughput vs the real PhysX-FEM shear solver =====
-    fem_fps = fem_shear_solver_fps()
+    solver_fps, production_fps, solver_source = solver_fps_from_data(D)
     speeds = {
         "mlp": throughput(mlp, nin(inp[te_idx]), nsc(scal[te_idx]), cg, is_mlp=True),
         "fno": throughput(fno, nin(inp[te_idx]), nsc(scal[te_idx]), cg),
         "fno_mt_a": throughput(fno_mt, nin(inp[te_idx]), nsc(scal[te_idx]), cg, multitask=True),
-        "physx_fem_shear_solver": fem_fps,
+        "gt_solver": solver_fps,
+        "gt_solver_k3_averaged": production_fps,
+        # Compatibility alias for older report code; semantically this is now the
+        # solver recorded in the selected --data npz, not a separate PhysX scan.
+        "physx_fem_shear_solver": solver_fps,
     }
     summary["RQ3"]["throughput_fps"] = speeds
-    summary["RQ3"]["fno_speedup_vs_fem"] = round(speeds["fno"] / fem_fps, 1)
-    summary["RQ3"]["note"] = (f"physx_fem_shear_solver={fem_fps:.3f} fps measured from the swept "
-                              "combos' solve_time_s (res-24, 50x50x20mm gel).")
+    summary["RQ3"]["fno_speedup_vs_gt_solver"] = round(speeds["fno"] / solver_fps, 1)
+    summary["RQ3"]["fno_speedup_vs_fem"] = summary["RQ3"]["fno_speedup_vs_gt_solver"]
+    summary["RQ3"]["solver_timing_source"] = solver_source
+    summary["RQ3"]["note"] = (
+        f"gt_solver={solver_fps:.3f} fps is the fair single-solve rate from "
+        f"{solver_source}; gt_solver_k3_averaged={production_fps:.3f} fps includes "
+        f"all K=3 calls used to form each production target in {os.path.basename(args.data)}."
+    )
 
     # ===== print =====
     r1 = summary["RQ1"]
@@ -191,8 +235,8 @@ def main():
         f"{m}={r1['fno']['relative_l2'].get(m, float('nan')):.3f}" for m in MODE_NAMES))
     print(f"slip macro-F1: head_a={r1['slip_head_a_multitask']['macro_f1']:.3f}  "
           f"head_b={r1['slip_head_b_classifier']['macro_f1']:.3f}")
-    print(f"\n=== RQ3 speed ===  FNO {speeds['fno']:.0f} fps vs FEM {fem_fps:.3f} fps "
-          f"=> {summary['RQ3']['fno_speedup_vs_fem']:.0f}x")
+    print(f"\n=== RQ3 speed ===  FNO {speeds['fno']:.0f} fps vs GT solver {solver_fps:.3f} fps "
+          f"=> {summary['RQ3']['fno_speedup_vs_gt_solver']:.0f}x")
 
     ensure(RUNS / "phase3_fem")
     json.dump(summary, open(RUNS / "phase3_fem" / "benchmark.json", "w"), indent=2)

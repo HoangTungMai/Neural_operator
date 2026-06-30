@@ -23,8 +23,8 @@
 # Aggregate afterwards with:
 #   python -m novbts.groundtruth.aggregate_uipc_convergence --conv-dir data/uipc/conv
 #
-# Config is the validated smoke config (gel 0.10/0.04, R 0.02, mu 0.6, E 1e5,
-# depth 0.005, shear 0.004). NOTE: this is IPC self-consistency, NOT yet a paired
+# Config is the realistic thin-gel Phase-0 config (gel 0.020/0.003, R 0.004,
+# mu 0.6, E 1e5, depth 0.00045, shear 0.00036). NOTE: this is IPC self-consistency, NOT yet a paired
 # comparison vs PhysX — that is a separate run matching a PhysX combo's geometry.
 #
 # Usage: bash infra/gen_uipc_convergence.sh
@@ -35,20 +35,36 @@ IMG=isaac-lab-tacex:latest
 SCRIPT=/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py
 NAME=uipcconv
 PY=.venv-gate2/bin/python
+GEL_XY="${GEL_XY:-0.020}"
+GEL_Z="${GEL_Z:-0.003}"
+INDENTOR_R="${INDENTOR_R:-0.004}"
+MU="${MU:-0.6}"
+YOUNGS="${YOUNGS:-1.0e5}"
+DEPTH="${DEPTH:-0.00030}"
+SHEAR="${SHEAR:-0.00036}"
+DRIVE_RATIO="${DRIVE_RATIO:-0.60}"
+D_HAT="${D_HAT:-0.0001}"
+CONTACT_RESISTANCE="${CONTACT_RESISTANCE:-1.0e9}"
+VELOCITY_TOL="${VELOCITY_TOL:-0.001}"
+RES_LEVELS_STR="${RES_LEVELS_STR:-16 20 24}"
+EPS_LEVELS_STR="${EPS_LEVELS_STR:-0.001 0.0005 0.00025 0.0001 0.00005 0.000025}"
+CONV_DIR="${CONV_DIR:-data/uipc/conv_realistic}"
 
 # fixed indent+shear config (the smoke config) — shared by every run
-COMMON="--single --marker-side 32 --gel-xy 0.10 --gel-z 0.04 \
-  --indentor-r 0.02 --mu 0.6 --youngs 1.0e5 --depth 0.005 --shear 0.004 \
+COMMON="--single --marker-side 32 --gel-xy $GEL_XY --gel-z $GEL_Z \
+  --indentor-r $INDENTOR_R --mu $MU --youngs $YOUNGS --depth $DEPTH --shear $SHEAR \
+  --drive-ratio $DRIVE_RATIO --d-hat $D_HAT --contact-resistance $CONTACT_RESISTANCE \
+  --velocity-tol $VELOCITY_TOL \
   --press-steps 40 --settle-steps 10 --shear-steps 80 --shear-settle 10"
 
 # refinement levels (finest LAST). Edit here to extend/shorten the study.
 # mesh: gel_res cells/footprint-axis (finer = LARGER). fric: eps_velocity (finer = smaller).
-RES_LEVELS=(6 8 12 16 20 24)
-EPS_LEVELS=(0.02 0.01 0.005 0.002 0.001)
+read -r -a RES_LEVELS <<< "$RES_LEVELS_STR"
+read -r -a EPS_LEVELS <<< "$EPS_LEVELS_STR"
 RES_FINE="${RES_LEVELS[${#RES_LEVELS[@]}-1]}"   # 24
 EPS_FINE="${EPS_LEVELS[${#EPS_LEVELS[@]}-1]}"   # 0.001
 
-mkdir -p data/uipc/conv
+mkdir -p "$CONV_DIR"
 
 # Build the unique (gel_res, eps_velocity) point list for the two paths.
 # mesh path: every RES level at EPS_FINE ; fric path: RES_FINE at every EPS level.
@@ -68,8 +84,8 @@ echo "UIPC convergence: ${#POINTS[@]} unique settings (mesh path ${#RES_LEVELS[@
 for pt in "${POINTS[@]}"; do
   read RES EV <<< "$pt"
   t="$(tag "$RES" "$EV")"
-  out="/work/data/uipc/conv/$t"
-  host="data/uipc/conv/$t/uipc_gt_shear.npz"
+  out="/work/$CONV_DIR/$t"
+  host="$CONV_DIR/$t/uipc_gt_shear.npz"
   if [ -f "$host" ]; then
     echo "skip $t (npz exists)"; ndone=$((ndone+1)); continue
   fi
@@ -80,6 +96,8 @@ for pt in "${POINTS[@]}"; do
     --entrypoint /isaac-sim/python.sh $IMG $SCRIPT $COMMON \
     --gel-res "$RES" --eps-velocity "$EV" --out "$out"
   docker rm -f $NAME >/dev/null 2>&1
+  docker run --rm -v "$PWD":/work --entrypoint bash "$IMG" \
+    -c "chown -R $(id -u):$(id -g) /work/$CONV_DIR" >/dev/null 2>&1
   # Container exit code is unreliable; gate success on the npz existing + loadable.
   if [ -f "$host" ] && $PY -c "import numpy as np; np.load('$host', allow_pickle=True)['disp']" >/dev/null 2>&1; then
     echo "$t OK"; nrun=$((nrun+1))
@@ -88,4 +106,4 @@ for pt in "${POINTS[@]}"; do
   fi
 done
 echo "UIPC CONVERGENCE DONE: skipped=$ndone ran=$nrun failed=$nfail / ${#POINTS[@]} settings"
-echo "Aggregate: $PY -m novbts.groundtruth.aggregate_uipc_convergence --conv-dir data/uipc/conv"
+echo "Aggregate: $PY -m novbts.groundtruth.aggregate_uipc_convergence --conv-dir $CONV_DIR"

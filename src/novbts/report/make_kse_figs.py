@@ -38,7 +38,7 @@ def fig_fidelity_speed() -> None:
         ("FNO", fps["fno"], rl2("fno"), "tab:orange", (10, -14), "left"),
         ("FNO+slip(a)", fps["fno_mt_a"], rl2("fno_mt_a"), "tab:green", (10, 8), "left"),
     ]
-    solver_fps = fps["physx_fem_shear_solver"]
+    solver_fps = fps.get("gt_solver", fps["physx_fem_shear_solver"])
 
     fig, ax = plt.subplots(figsize=(6.4, 4.0))
     for name, x, y, c, off, ha in pts:

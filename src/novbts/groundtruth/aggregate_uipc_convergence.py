@@ -43,9 +43,21 @@ def channels(field_a, field_b):
     }
 
 
+def _same(a, b, name, path):
+    if a.shape != b.shape:
+        raise SystemExit(f"{name} mismatch in {path}; convergence fields are not paired")
+    try:
+        ok = np.allclose(a, b, rtol=1e-5, atol=1e-8)
+    except (TypeError, ValueError):
+        ok = np.array_equal(a, b)
+    if not ok:
+        raise SystemExit(f"{name} mismatch in {path}; convergence fields are not paired")
+
+
 def load_points(conv_dir):
     """Return list of dicts: {gel_res, eps_velocity, field (M,3), tag}."""
     pts = []
+    ref = None
     for npz_path in sorted(glob.glob(os.path.join(conv_dir, "*", "uipc_gt_shear.npz"))):
         d = np.load(npz_path, allow_pickle=True)
         if "gel_res" not in d.files:
@@ -53,16 +65,39 @@ def load_points(conv_dir):
             # and were shown to be invalid (non-deterministic mesh, collapsed field).
             print(f"  skip {npz_path} (no gel_res: old wildmeshing run)")
             continue
+        if ref is None:
+            ref = {
+                "coords": np.asarray(d["coords"]),
+                "params": np.asarray(d["params"]),
+                "mode": np.asarray(d["mode"]),
+            }
+            for key in ("velocity_tol", "d_hat", "contact_resistance", "marker_sampling"):
+                if key in d.files:
+                    ref[key] = np.asarray(d[key])
+        else:
+            _same(ref["coords"], np.asarray(d["coords"]), "coords", npz_path)
+            _same(ref["params"], np.asarray(d["params"]), "params", npz_path)
+            _same(ref["mode"], np.asarray(d["mode"]), "mode", npz_path)
+            for key in ("velocity_tol", "d_hat", "contact_resistance", "marker_sampling"):
+                if key in ref and key in d.files:
+                    _same(ref[key], np.asarray(d[key]), key, npz_path)
         field = np.asarray(d["disp"])[0]  # (M, 3)
         gr = int(np.asarray(d["gel_res"]).reshape(-1)[0])
-        # eps stored as float32 -> round to kill representation noise (0.0019999 -> 0.002)
-        ev = round(float(np.asarray(d["eps_velocity"]).reshape(-1)[0]), 5)
-        pts.append({
+        # eps is float32; eight decimal places remove representation noise without
+        # collapsing Phase-0 levels such as 2.5e-5 to 2e-5.
+        ev = round(float(np.asarray(d["eps_velocity"]).reshape(-1)[0]), 8)
+        point = {
             "gel_res": gr,
             "eps_velocity": ev,
             "field": field,
             "tag": os.path.basename(os.path.dirname(npz_path)),
-        })
+        }
+        for key in ("velocity_tol", "d_hat", "contact_resistance"):
+            if key in d.files:
+                point[key] = float(np.asarray(d[key]).reshape(-1)[0])
+        if "marker_sampling" in d.files:
+            point["marker_sampling"] = str(np.asarray(d["marker_sampling"]).item())
+        pts.append(point)
     return pts
 
 
@@ -158,6 +193,10 @@ def main():
     report = {
         "n_points": len(points),
         "points": [{"gel_res": p["gel_res"], "eps_velocity": p["eps_velocity"],
+                    "velocity_tol": p.get("velocity_tol"),
+                    "d_hat": p.get("d_hat"),
+                    "contact_resistance": p.get("contact_resistance"),
+                    "marker_sampling": p.get("marker_sampling"),
                     "tag": p["tag"]} for p in points],
         "mesh_path": analyse(points, "mesh"),
         "friction_path": analyse(points, "eps"),

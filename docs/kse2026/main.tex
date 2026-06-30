@@ -44,15 +44,15 @@ with libuipc in a TacEx-style setup, the surrogate yields three results.
 (i)~\emph{Field-to-field framing
 is the key}: because surface displacement is a \emph{non-local} (Green's-function)
 response, an operator that learns global spectral convolutions beats a local
-per-point MLP by $10.6\times$ and the analytic and learned VBTS baselines by
-$4.46$--$12.69\times$ on the same IPC ground truth.
+per-point MLP by $12.14\times$ and the analytic and learned VBTS baselines by
+$5.54$--$12.63\times$ on the same IPC ground truth.
 (ii)~\emph{Differentiability buys
 sample-efficient control}: learning a goal-conditioned policy by backpropagation
-through the frozen operator needs $64\times$ fewer model queries, runs
-$24.2\times$ faster, and reaches lower final loss than a gradient-free baseline.
-(iii)~\emph{The sensor is differentiable end-to-end}: a torch marker-dot renderer
-composes with the operator so that the applied shear can be recovered from the
-rendered tactile image alone. We close with an honest account of scope: averaged
+through the frozen operator reaches the target with $84\times$ fewer model queries,
+runs $24.5\times$ faster, and reaches lower final loss than a gradient-free
+baseline. (iii)~\emph{The sensor pipeline is autograd-connected}: a torch
+marker-dot renderer composes with the operator so that applied shear can be
+optimized from the rendered tactile image alone. We close with an honest account of scope: averaged
 simulation ground truth does not model real sensor noise, the environment is
 single-step and quasi-static, and the present geometry is sphere-centric.
 \end{abstract}
@@ -95,18 +95,18 @@ control loop. Our contributions are:
 We show that posing the problem as \emph{field$\to$field} (not per-point
 regression) is decisive: surface displacement is a non-local Green's-function
 response, so a global spectral operator beats a local MLP by
-$10.6\times$, and
+$12.14\times$, and
 beats reimplemented TACTO-, Taxim/FOTS-, and Cattaneo--Mindlin-style baselines by
-$4.46$--$12.69\times$, all measured on the \emph{same} IPC ground truth
+$5.54$--$12.63\times$, all measured on the \emph{same} IPC ground truth
 (Sec.~\ref{sec:exp-accuracy}).
 \item \textbf{Differentiable control through a frozen operator.}
 Backpropagating a goal-conditioned policy through the frozen surrogate reaches a
-tactile target with $64\times$ fewer model queries and $24.2\times$ less
-wall-clock than evolution strategies, while also reaching lower final loss
+tactile target with $84\times$ fewer target-reaching model queries and
+$24.5\times$ less wall-clock than evolution strategies, while also reaching lower final loss
 (Sec.~\ref{sec:exp-control}). We find the often-reported pathology of
 differentiable simulators~\cite{suh2022diffsim} does \emph{not} bite here, and
 explain why.
-\item \textbf{An end-to-end differentiable sensor.}
+\item \textbf{An autograd-connected sensor pipeline.}
 A torch marker-dot renderer composes with the operator, $\mathrm{render}\circ
 \mathrm{FNO}$, so a control action can be recovered from the rendered tactile
 \emph{image} by gradient descent (Sec.~\ref{sec:exp-sensor}).
@@ -152,19 +152,25 @@ data and is the yardstick; an \emph{analytic validator}
 ground truth and provides a first-principles baseline; and the \emph{fast
 differentiable surrogate} (FNO) is our contribution.
 
-\textbf{FEM ground truth.} We simulate a $50\times50\times20$\,mm gel with
+\textbf{FEM ground truth.} We simulate a representative thin-gel
+$20\times20\times3$\,mm tactile sensor with
 IPC/GIPC frictional contact using libuipc in a TacEx-style
 setup~\cite{huang2024gipc,nguyen2024tacex}. We selected IPC because the tangential
-stiffness converges under mesh refinement. A default sphere ($r{=}20$\,mm)
-indents and shears the gel through the stick--partial-slip--full-slip regimes.
+stiffness converges under mesh refinement. A spherical indenter
+($R\in[2,6]$\,mm) indents the bonded thin gel by $0.15$--$0.75$\,mm and shears it
+through the stick--partial-slip--full-slip regimes.
 Each frame exports the surface displacement field
 $\mathbf{u}\in\mathbb{R}^{M\times3}$ sampled on a $32\times32$ marker grid. The
-analytic validator matches the FEM contact radius to within $1.3\%$, confirming
-fidelity in the normal regime. We sweep indenter radius $R$, friction $\mu$, and
-gel stiffness $E$ to produce a structured-tetrahedron, resolution-24 benchmark of
-$N{=}2520$ frames ($2120$ train / $400$ test). A normal-contact top-up balances
-the classes, yielding normal / stick / partial-slip / full-slip counts of
-$430/709/891/490$ (normal $\approx17\%$).
+analytic Hertz/Cattaneo--Mindlin model is used only as a first-principles
+baseline: the finite, substrate-confined gel is expected to deviate from the
+half-space solution, which is precisely why IPC/GIPC is the ground truth. We sweep
+indenter radius $R$, friction $\mu$, and gel stiffness $E$ to produce a
+structured-tetrahedron, resolution-24 benchmark of $N{=}2520$ frames ($2120$
+train / $400$ deterministic stratified test). A normal-contact top-up keeps all
+regimes represented, yielding normal / stick / partial-slip / full-slip counts of
+$425/712/895/488$ (test: $68/113/142/77$). The gel bottom is bonded as a pinned
+Dirichlet boundary to a rigid transparent support; the top is the contact
+surface, the sides are free, and the indenter is rigid and displacement-controlled.
 
 \textbf{Contact-mode taxonomy.} Each frame is labelled
 normal / stick / partial-slip / full-slip by tangential-drive thresholds; we
@@ -224,7 +230,7 @@ truncated to the lowest $k$ modes. This global support is the crux. Surface
 displacement obeys an elastic Green's response: indenting one point moves a whole
 neighbourhood. A \emph{local} map (a per-point MLP fed the full parameter vector)
 can fit the easy param$\to$field direction but \emph{collapses} on field$\to$field
-($\relL=0.320$, $72^\circ$ direction error), whereas the FNO holds. The operator
+($\relL=0.501$, $84^\circ$ direction error), whereas the FNO holds. The operator
 framing is therefore not a modelling convenience but the source of the result.
 
 We add two lightweight classification heads that predict the contact mode, trained
@@ -235,8 +241,8 @@ Because the operator already outputs the surface field, a tactile \emph{image}
 needs no new physics: we project the deformed marker positions through a pinhole
 camera placed beneath the membrane and splat each marker as a differentiable
 Gaussian dot (with dark/bright polarity and saturation). The renderer is written in
-torch, so $\mathrm{render}\circ\mathcal{G}_\theta$ is differentiable end-to-end and
-the pixel marker-flow images the in-plane displacement wherever the gel shears
+torch, so $\mathrm{render}\circ\mathcal{G}_\theta$ exposes autograd gradients to
+the action variables, and the pixel marker-flow images the in-plane displacement wherever the gel shears
 (Sec.~\ref{sec:exp-sensor}).
 
 \subsection{Differentiable control through a frozen operator}\label{sec:method-control}
@@ -263,9 +269,9 @@ wall-clock. Reported control numbers are means over three seeds.
 Table~\ref{tab:bakeoff} reports an in-house bake-off: we reimplement the
 \emph{marker-motion core} of representative VBTS simulators and fit each on our FEM
 ground truth (cross-paper numbers are not comparable, since methods target
-different sensor outputs). The operator attains $\relL=0.030$ and a
-$1.1^\circ$ tangential direction error, beating every classical and analytic
-baseline by $4.46$--$12.69\times$. Two readings stand out. First, first-principles
+different sensor outputs). The operator attains $\relL=0.041$ and a
+$1.6^\circ$ tangential direction error, beating every classical and analytic
+baseline by $5.54$--$12.63\times$. Two readings stand out. First, first-principles
 Cattaneo--Mindlin physics, even after affine calibration, \emph{loses} to a
 data-fit linear model: affine scaling cannot change the \emph{shape} of the profile
 where the real field departs from the idealised analytic one. Second, the
@@ -273,14 +279,14 @@ linear Taxim/FOTS model is the strongest classical baseline yet still trails the
 operator, because the stick$\to$partial$\to$full-slip transition is
 \emph{non-linear}. The operator's gain is thus non-linear \emph{and} non-local.
 
-Against modern dense/operator architectures, DeepONet is closest at $0.049$
-($1.64\times$ behind FNO), followed by U-Net~\cite{ronneberger2015unet} at
-$0.078$ and the Galerkin Transformer at $0.087$. The defensible message is
+Against modern dense/operator architectures, DeepONet is closest at $0.046$
+($1.12\times$ behind FNO), followed by U-Net~\cite{ronneberger2015unet} at
+$0.058$ and the Galerkin Transformer at $0.091$. The defensible message is
 \emph{``dense, non-local operator learning beats physics-based and linear tactile
 models, and the spectral FNO is strongest in this bakeoff.''}
-Per regime, the operator remains accurate from normal ($0.030$) through full slip
-($0.035$), with stick and partial slip at $0.029$ and $0.030$, respectively.
-The multitask slip head reaches macro-F1 $0.953$ (binary slip-F1 $0.986$).
+Per regime, the operator remains accurate from normal ($0.033$) through full slip
+($0.065$), with stick and partial slip at $0.030$ and $0.042$, respectively.
+The multitask slip head reaches macro-F1 $0.940$ (binary slip-F1 $0.980$).
 
 \begin{table}[t]
 \centering
@@ -294,33 +300,33 @@ same $2120$/$400$ split. Lower $\relL$ and direction error are better.}
 Method & $\relL$ & dir.\ ($^\circ$) & params & adv.\ $\times$ \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{VBTS-simulator marker cores}}\\
-TACTO-style (kinematic) & 0.383 & 71.5 & 3 & 12.69 \\
-Cattaneo--Mindlin (analytic) & 0.350 & 75.7 & 6 & 11.58 \\
-Taxim/FOTS-style (linear) & 0.135 & 5.5 & 14.4k & 4.46 \\
-MLP per-point (local) & 0.320 & 72.0 & 134k & 10.61 \\
+TACTO-style (kinematic) & 0.521 & 79.7 & 3 & 12.63 \\
+Cattaneo--Mindlin (analytic) & 0.491 & 81.0 & 6 & 11.89 \\
+Taxim/FOTS-style (linear) & 0.229 & 5.1 & 14.4k & 5.54 \\
+MLP per-point (local) & 0.501 & 83.9 & 134k & 12.14 \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{Modern dense / operator nets}}\\
-DeepONet & 0.049 & 1.3 & 1.05M & 1.64 \\
-Galerkin Transformer & 0.087 & 1.5 & 0.30M & 2.88 \\
-U-Net & 0.078 & 5.2 & 0.47M & 2.57 \\
-\textbf{FNO (ours)} & \textbf{0.030} & \textbf{1.1} & 2.67M & --- \\
+DeepONet & 0.046 & 1.9 & 1.05M & 1.12 \\
+Galerkin Transformer & 0.091 & 2.4 & 0.30M & 2.19 \\
+U-Net & 0.058 & 2.7 & 0.47M & 1.42 \\
+\textbf{FNO (ours)} & \textbf{0.041} & \textbf{1.6} & 2.67M & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{RQ2: Generalization}\label{sec:exp-gen}
 Extrapolating to the held-out upper tail of each physical parameter degrades the
-operator only mildly: $1.77\times$ for radius, $1.42\times$ for friction, and
-$1.24\times$ for stiffness, indicating a smooth, in-envelope response. Encoding
-geometry \emph{into the input field} (rather than a one-hot tag) generalizes far
-better to an out-of-distribution flat-punch indenter, since the contact field
-itself carries the shape.
+operator by $1.80\times$ for radius, $2.36\times$ for friction, and $1.11\times$
+for stiffness, indicating a smooth but friction-sensitive in-envelope response.
+We do not claim shape extrapolation here: all production frames use spherical
+indenters, and non-spherical objects remain future work.
 
 \subsection{RQ3: Speed}\label{sec:exp-speed}
-The operator runs at $\sim$$7680$ frames/s ($\sim$$0.13$\,ms latency) versus
-$0.341$\,frames/s for the conservative solver benchmark---a
-$\sim$$22{,}500\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). A full IPC
-solve takes roughly $13$\,s/frame, so this reported comparison is conservative.
+The operator runs at $\sim$$7839$ frames/s ($\sim$$0.13$\,ms latency) versus
+$0.094$\,frames/s for a fair single IPC/GIPC solve---a
+$\sim$$83{,}200\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). The production
+target averages $K{=}3$ repeated solves, whose effective rate is
+$0.031$\,frames/s; the speedup figure reports the single-solve rate for fairness.
 We are careful here (Sec.~\ref{sec:limits}):
 modern batched GPU physics engines achieve higher aggregate \emph{throughput}. The
 operator's durable advantage is the \emph{combination} of low single-frame latency,
@@ -338,12 +344,13 @@ FEM-level field accuracy at four orders of magnitude lower latency.}
 We train the goal-conditioned servo policy two ways
 (Table~\ref{tab:control}, Fig.~\ref{fig:control}). Autograd through the frozen
 operator and black-box ES are evaluated on the same IPC dataset. Autograd reaches
-a final loss of $2.77\times10^{-9}$ against ES's $1.03\times10^{-8}$, while using
+a final loss of $5.70\times10^{-10}$ against ES's $6.21\times10^{-10}$, while using
 $\mathbf{300}$ forward evaluations against ES's $\mathbf{19{,}200}$ ($64\times$
-fewer) and finishing in $\mathbf{13.67}$\,s versus $\mathbf{331.19}$\,s
-($24.2\times$ faster). It first reaches the target after $11$ queries versus
-$704$ for ES (also $64\times$ fewer). Both sit above a per-instance oracle
-($1.75\times10^{-9}$), the expected price of a single amortized network serving
+smaller evaluation budget) and finishing in $\mathbf{13.21}$\,s versus
+$\mathbf{323.95}$\,s ($24.5\times$ faster). It first reaches the target after
+$21$ queries versus $1771$ for ES ($84\times$ fewer). Both sit above a
+per-instance oracle ($3.04\times10^{-11}$), the expected price of a single
+amortized network serving
 all contexts.
 
 Notably, the gradient pathology of differentiable
@@ -363,10 +370,10 @@ gradient-free ES (mean over 3 seeds). Lower loss and far fewer queries.}
 \toprule
  & final loss & fwd queries & wall (s) \\
 \midrule
-autograd (ours) & $2.77\times10^{-9}$ & \textbf{300} & \textbf{13.67} \\
-ES (pop 32) & $1.03\times10^{-8}$ & 19{,}200 & 331.19 \\
+autograd (ours) & $5.70\times10^{-10}$ & \textbf{300} & \textbf{13.21} \\
+ES (pop 32) & $6.21\times10^{-10}$ & 19{,}200 & 323.95 \\
 \midrule
-per-instance oracle & $1.75\times10^{-9}$ & --- & --- \\
+per-instance oracle & $3.04\times10^{-11}$ & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -375,26 +382,27 @@ per-instance oracle & $1.75\times10^{-9}$ & --- & --- \\
 \centering
 \includegraphics[width=0.92\columnwidth]{figs/policy_servo_curve.png}
 \caption{Control convergence vs.\ model queries (log scale). Autograd reaches the
-target $64\times$ earlier in query count.}
+target $84\times$ earlier in query count.}
 \label{fig:control}
 \end{figure}
 
 \subsection{RQ5: The differentiable sensor and environment}\label{sec:exp-sensor}
-The rendered marker flow images in-plane displacement wherever the gel shears: in
-the slip regimes the cosine between pixel flow and surface in-plane displacement is
-$0.85$ (it is undefined under near-zero shear, e.g.\ normal contact, which carries
-no in-plane motion to image), and a render$\to$track round trip recovers marker
-centroids to ${\sim}1.9$\,px in stick, rising to a few pixels under large slip, at
-$160$\,px resolution (Fig.~\ref{fig:sensor}). Composing the renderer with the operator, gradient
-descent on the rendered \emph{image} recovers applied shear to ${\sim}2.9\%$
-magnitude error and ${\sim}0.9^\circ$ direction error across 15 frames from the
-stick, partial-slip, and full-slip regimes. We exclude normal frames because
-their near-zero shear makes direction undefined.
+The rendered marker flow images in-plane displacement wherever the gel shears:
+the cosine between pixel flow and surface in-plane displacement is $0.56$ in
+stick, $0.92$ in partial slip, and $0.97$ in full slip (normal contact has
+near-zero tangential motion and a negative diagnostic cosine). A render$\to$track
+round trip recovers marker centroids to $0.39$\,px in stick, $0.87$\,px in partial
+slip, and $1.50$\,px in full slip at $160$\,px resolution
+(Fig.~\ref{fig:sensor}). Composing the renderer with the operator, gradient
+descent on the rendered \emph{image} recovers applied shear over 20 frames with
+$15.5\%$ mean magnitude error and $3.8^\circ$ mean direction error; direction is
+hardest in normal frames because shear magnitude is near zero.
 Finally, wrapping the frozen operator, the sensor, camera noise, and a reward into a
 single differentiable environment, the Sec.~\ref{sec:exp-control} policy closes
-$99.8\%$ of the random-to-oracle reward gap, and a finite-difference gradient check
-passes (rel.\ error $3.3\%$), confirming gradients flow to the action through the
-full image pipeline.
+$99.9\%$ of the random-to-oracle reward gap. Autograd gradients flow to the
+action through the full image pipeline; the current finite-difference diagnostic
+has $5.2\%$ relative error under noisy image rewards, so we treat it as a gradient
+sanity check rather than a formal proof of numerical equality.
 
 \begin{figure}[t]
 \centering
@@ -425,8 +433,9 @@ We presented a Fourier neural-operator surrogate for vision-based tactile sensin
 that is FEM-fidelity, differentiable, and hardware-light. The field-to-field framing
 exploits the non-locality of elastic contact and beats classical and analytic
 tactile models on real physics; its differentiability buys an order-of-magnitude
-gain in control sample efficiency; and a torch renderer makes the whole sensor
-differentiable end-to-end. We were explicit about its simulation, temporal, and
+gain in control sample efficiency; and a torch renderer provides an
+autograd-connected image-space loop around the frozen operator. We were explicit
+about its simulation, temporal, and
 geometric scope. The natural next step is to mount the surrogate inside a full
 Isaac-Sim robot environment and to close the sim-to-real loop on a physical marker-gel
 sensor, fine-tuning the operator on real measurements so that reality corrects both

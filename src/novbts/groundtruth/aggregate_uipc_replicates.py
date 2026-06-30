@@ -66,7 +66,13 @@ def replicate_noise(fields: np.ndarray) -> dict[str, float]:
 
 
 def _same(a: np.ndarray, b: np.ndarray, name: str, path: str) -> None:
-    if a.shape != b.shape or not np.allclose(a, b, rtol=1e-5, atol=1e-8):
+    if a.shape != b.shape:
+        raise SystemExit(f"{name} mismatch in {path}")
+    try:
+        ok = np.allclose(a, b, rtol=1e-5, atol=1e-8)
+    except (TypeError, ValueError):
+        ok = np.array_equal(a, b)
+    if not ok:
         raise SystemExit(f"{name} mismatch in {path}")
 
 
@@ -78,7 +84,10 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
     for p, d in zip(paths[1:], loaded[1:]):
         _same(ref["params"], d["params"], "params", p)
         _same(ref["coords"], d["coords"], "coords", p)
-        for key in ("gel_res", "eps_velocity", "d_hat", "contact_resistance"):
+        for key in (
+            "gel_res", "eps_velocity", "velocity_tol", "d_hat",
+            "contact_resistance", "marker_sampling",
+        ):
             if key in ref.files and key in d.files:
                 _same(np.asarray(ref[key]), np.asarray(d[key]), key, p)
 
@@ -109,7 +118,10 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
             dtype="U120",
         ),
     }
-    for key in ("gel_res", "eps_velocity", "d_hat", "contact_resistance", "n_tet_verts"):
+    for key in (
+        "gel_res", "eps_velocity", "velocity_tol", "d_hat",
+        "contact_resistance", "n_tet_verts", "marker_sampling",
+    ):
         if key in ref.files:
             out[key] = np.asarray(ref[key]).copy()
     for key, value in noise.items():
@@ -123,9 +135,42 @@ def save_npz(path: str | Path, data: dict[str, np.ndarray]) -> None:
     np.savez_compressed(path, **data)
 
 
+def stratified_train_test_order(modes: np.ndarray, test_size: int, seed: int) -> np.ndarray:
+    """Return train-then-test indices with a proportional deterministic test split."""
+    modes = np.asarray(modes, dtype=np.int64).reshape(-1)
+    n = len(modes)
+    if not 0 < test_size < n:
+        raise ValueError(f"test_size must lie in (0, {n}), got {test_size}")
+    classes, counts = np.unique(modes, return_counts=True)
+    expected = counts.astype(np.float64) * (test_size / n)
+    test_counts = np.floor(expected).astype(np.int64)
+    remainder = test_size - int(test_counts.sum())
+    if remainder:
+        fractional = expected - test_counts
+        # Stable tie-break by class id.
+        priority = np.lexsort((classes, -fractional))
+        test_counts[priority[:remainder]] += 1
+
+    rng = np.random.default_rng(seed)
+    train_parts, test_parts = [], []
+    for cls, n_test in zip(classes, test_counts):
+        idx = np.flatnonzero(modes == cls)
+        idx = idx[rng.permutation(len(idx))]
+        test_parts.append(idx[:n_test])
+        train_parts.append(idx[n_test:])
+    train = np.concatenate(train_parts)
+    test = np.concatenate(test_parts)
+    train = train[rng.permutation(len(train))]
+    test = test[rng.permutation(len(test))]
+    return np.concatenate([train, test])
+
+
 def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | None,
                     expect_reps: int | None = None,
-                    frame_out_name: str = "uipc_gt_shear_avg.npz") -> None:
+                    frame_out_name: str = "uipc_gt_shear_avg.npz",
+                    test_size: int | None = None,
+                    shuffle_seed: int = 2026,
+                    write_frame_averages: bool = True) -> None:
     frame_dirs = sorted(Path(sweep_dir).glob("combo_*/frame_*"))
     rows, skipped = [], []
     for frame_dir in frame_dirs:
@@ -137,8 +182,10 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
             skipped.append(f"{frame_dir} ({len(rep_paths)}/{expect_reps} reps)")
             continue
         avg = average_files(rep_paths, mode_shear_scale=mode_shear_scale)
-        frame_out = frame_dir / frame_out_name
-        save_npz(frame_out, avg)
+        avg["source_frame_dir"] = np.array([str(frame_dir)], dtype="U512")
+        if write_frame_averages:
+            frame_out = frame_dir / frame_out_name
+            save_npz(frame_out, avg)
         rows.append(avg)
 
     if not rows:
@@ -147,6 +194,11 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
     coords = rows[0]["coords"]
     for i, row in enumerate(rows[1:], start=1):
         _same(coords, row["coords"], "coords", f"frame {i}")
+
+    if test_size is not None:
+        modes = np.concatenate([r["mode"] for r in rows], axis=0)
+        order = stratified_train_test_order(modes, test_size, shuffle_seed)
+        rows = [rows[int(i)] for i in order]
 
     merged: dict[str, np.ndarray] = {
         "params": np.concatenate([r["params"] for r in rows], axis=0).astype(np.float32),
@@ -158,9 +210,16 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
         "rep_noise_overall": np.concatenate([r["rep_noise_overall"] for r in rows], axis=0).astype(np.float32),
         "rep_noise_normal": np.concatenate([r["rep_noise_normal"] for r in rows], axis=0).astype(np.float32),
         "rep_noise_tangential": np.concatenate([r["rep_noise_tangential"] for r in rows], axis=0).astype(np.float32),
+        "source_frame_dir": np.concatenate([r["source_frame_dir"] for r in rows], axis=0),
         "meta": np.array("gt=uipc_ipc_SHEAR_sweep; rep_averaged; tacex_uipc; units=m", dtype="U96"),
     }
-    for key in ("gel_res", "eps_velocity", "d_hat", "contact_resistance", "n_tet_verts"):
+    if test_size is not None:
+        merged["split_test_size"] = np.array([test_size], dtype=np.int32)
+        merged["split_shuffle_seed"] = np.array([shuffle_seed], dtype=np.int64)
+    for key in (
+        "gel_res", "eps_velocity", "velocity_tol", "d_hat",
+        "contact_resistance", "n_tet_verts", "marker_sampling",
+    ):
         if key in rows[0]:
             merged[key] = np.concatenate([r[key] for r in rows], axis=0)
     save_npz(out_path, merged)
@@ -180,6 +239,12 @@ def main() -> None:
                     help="infer mode from |shear|/(mu*scale), e.g. PhysX convention 0.01")
     ap.add_argument("--expect-reps", type=int, default=None,
                     help="when aggregating --sweep-dir, skip frame dirs that do not have this many reps")
+    ap.add_argument("--test-size", type=int, default=None,
+                    help="place a deterministic stratified test split of this size at the end")
+    ap.add_argument("--shuffle-seed", type=int, default=2026,
+                    help="seed for --test-size stratified train/test ordering")
+    ap.add_argument("--no-write-frame-averages", action="store_true",
+                    help="aggregate in memory without writing into frame directories")
     args = ap.parse_args()
 
     if bool(args.glob_pattern) == bool(args.sweep_dir):
@@ -193,7 +258,9 @@ def main() -> None:
         print(f"mode={data['mode'].tolist()} rep_noise_tang={float(data['rep_noise_tangential'][0]):.4f}")
     else:
         aggregate_sweep(args.sweep_dir, args.out, mode_shear_scale=args.mode_shear_scale,
-                        expect_reps=args.expect_reps)
+                        expect_reps=args.expect_reps, test_size=args.test_size,
+                        shuffle_seed=args.shuffle_seed,
+                        write_frame_averages=not args.no_write_frame_averages)
 
 
 if __name__ == "__main__":

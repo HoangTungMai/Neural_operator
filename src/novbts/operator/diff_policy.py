@@ -25,6 +25,7 @@ Task A (antislip, probe-gated): policy pi(mu,R,E,disturbance) -> depth; loss rea
 """
 import argparse
 import json
+import os
 import time
 
 import numpy as np
@@ -367,7 +368,8 @@ def run_probe(S, args):
     s_hi = float(np.quantile(np.hypot(P[:, 4], P[:, 5]), 0.95))
     print(f"context: R={R_med*1e3:.1f}mm mu={mu_med:.2f} E={E_med:.0f}  "
           f"depth[{d_lo*1e3:.2f},{d_hi*1e3:.2f}]mm  |shear|[0,{s_hi*1e3:.2f}]mm")
-    rep = {"context": {"R": float(R_med), "mu": float(mu_med), "E": float(E_med)}, "sweeps": {}}
+    rep = {"gt": os.path.basename(args.data), "gt_path": args.data,
+           "context": {"R": float(R_med), "mu": float(mu_med), "E": float(E_med)}, "sweeps": {}}
 
     depths = np.linspace(d_lo, d_hi, args.sweep_n)
     rows = np.tile(base, (args.sweep_n, 1)); rows[:, 2] = depths; rows[:, 4] = s_hi; rows[:, 5] = 0.0
@@ -467,7 +469,8 @@ def run_policy(S, args):
     verdict = {"differentiable": win, "sample_efficiency": eff,
                "autograd_final": a_fin, "es_final": e_fin, "floor": floor, "baseline": base}
 
-    out = {"task": args.task, "device": str(DEV), "train_frames": int(S.N - S.nt),
+    out = {"gt": os.path.basename(args.data), "gt_path": args.data,
+           "task": args.task, "device": str(DEV), "train_frames": int(S.N - S.nt),
            "side": S.side, "n_seeds": args.n_seeds,
            "fno": {"train_s": round(S.fno_train_s, 1), "params": S.fno_params},
            "policy_params": count_parameters(PolicyMLP(feat_tr.shape[1], 2, args.a_scale)),

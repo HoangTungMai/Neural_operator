@@ -351,9 +351,46 @@ def marker_grid(side):
 
 
 def sample_to_markers(top_rest_xy, top_disp, coords):
-    tree = cKDTree(top_rest_xy)
-    _, idx = tree.query(coords, k=1)
-    return top_disp[idx]
+    """Sample structured top-face displacements at marker coordinates.
+
+    The gel mesh is a regular structured box, so the top face is a tensor-product
+    grid. Bilinear interpolation avoids nearest-neighbor marker quantization when
+    the top grid is coarser than the 32x32 marker layout. If a future mesh is not
+    rectangular, fall back to the old nearest-vertex sampler.
+    """
+    xvals = np.unique(top_rest_xy[:, 0])
+    yvals = np.unique(top_rest_xy[:, 1])
+    nx, ny = len(xvals), len(yvals)
+    if nx * ny != top_rest_xy.shape[0] or nx < 2 or ny < 2:
+        tree = cKDTree(top_rest_xy)
+        _, idx = tree.query(coords, k=1)
+        return top_disp[idx], "nearest"
+
+    grid = np.full((nx, ny, 3), np.nan, dtype=np.float64)
+    ix = np.searchsorted(xvals, top_rest_xy[:, 0])
+    iy = np.searchsorted(yvals, top_rest_xy[:, 1])
+    grid[ix, iy] = top_disp
+    if np.isnan(grid).any():
+        tree = cKDTree(top_rest_xy)
+        _, idx = tree.query(coords, k=1)
+        return top_disp[idx], "nearest"
+
+    cx = np.clip(coords[:, 0], xvals[0], xvals[-1])
+    cy = np.clip(coords[:, 1], yvals[0], yvals[-1])
+    i0 = np.clip(np.searchsorted(xvals, cx, side="right") - 1, 0, nx - 2)
+    j0 = np.clip(np.searchsorted(yvals, cy, side="right") - 1, 0, ny - 2)
+    tx = ((cx - xvals[i0]) / np.maximum(xvals[i0 + 1] - xvals[i0], 1e-12))[:, None]
+    ty = ((cy - yvals[j0]) / np.maximum(yvals[j0 + 1] - yvals[j0], 1e-12))[:, None]
+
+    f00 = grid[i0, j0]
+    f10 = grid[i0 + 1, j0]
+    f01 = grid[i0, j0 + 1]
+    f11 = grid[i0 + 1, j0 + 1]
+    field = ((1.0 - tx) * (1.0 - ty) * f00
+             + tx * (1.0 - ty) * f10
+             + (1.0 - tx) * ty * f01
+             + tx * ty * f11)
+    return field, "bilinear"
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +607,7 @@ def run_one(sim, gel_res, eps_velocity, coords, verbose=False):
 
     # top-face vertices (structured mesh => exactly at z=GEL_TOP_Z at rest)
     top = np.where(rest[:, 2] >= rest[:, 2].max() - 1e-6)[0]
-    top_markers = sample_to_markers(rest[top, :2], disp[top], coords)  # (M, 3)
+    top_markers, marker_sampling = sample_to_markers(rest[top, :2], disp[top], coords)  # (M, 3)
 
     tnorm = np.linalg.norm(top_markers[:, :2], axis=1)
     scalars = {
@@ -584,6 +621,7 @@ def run_one(sim, gel_res, eps_velocity, coords, verbose=False):
         "net_tang_x": float(top_markers[:, 0].mean()),
         "net_tang_y": float(top_markers[:, 1].mean()),
         "solve_time_s": float(solve_time),
+        "marker_sampling": marker_sampling,
     }
     # free the engine before the next setting (fresh UipcSim per run). In batch
     # mode (many runs/process) also drop the stale callback + force GC so libuipc
@@ -640,9 +678,11 @@ def save_field(out_dir, coords, field, scalars):
         solve_time_s=np.array([scalars["solve_time_s"]], dtype=np.float32),
         gel_res=np.array([scalars["gel_res"]], dtype=np.int32),
         eps_velocity=np.array([scalars["eps_velocity"]], dtype=np.float32),
+        velocity_tol=np.array([args.velocity_tol], dtype=np.float32),
         d_hat=np.array([args.d_hat], dtype=np.float32),
         contact_resistance=np.array([args.contact_resistance], dtype=np.float32),
         n_tet_verts=np.array([scalars["n_tet_verts"]], dtype=np.int32),
+        marker_sampling=np.array([scalars.get("marker_sampling", "unknown")], dtype="U32"),
         meta=np.array("gt=uipc_ipc_SHEAR; tacex_uipc; units=m; geom=sphere", dtype="U96"),
     )
     flog(f"  saved field -> {os.path.join(out_dir, 'uipc_gt_shear.npz')}")

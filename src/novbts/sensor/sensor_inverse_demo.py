@@ -13,6 +13,7 @@
 """
 import argparse
 import json
+import os
 import time
 
 import numpy as np
@@ -175,7 +176,8 @@ def main():
             a = (flow_fno[sel] - flow_fem[sel]).reshape(-1)
             b = flow_fem[sel].reshape(-1)
             return float(a.norm() / (b.norm() + 1e-9))
-        compat = {"flow_rel_l2_overall": grel(msel >= 0),
+        compat = {"gt": os.path.basename(args.data), "gt_path": args.data,
+                  "flow_rel_l2_overall": grel(msel >= 0),
                   "flow_rel_l2_stick": grel(msel <= 1),
                   "flow_rel_l2_slip": grel(msel >= 2)}
     print("=== (1) FNO+renderer reproduces the sensor observation (marker-flow rel L2) ===")
@@ -185,7 +187,8 @@ def main():
     phase_dir = RUNS / "phase5"; ensure(phase_dir)
     flow_score = torch.linalg.norm(flow_fem, dim=-1).amax(dim=1).cpu().numpy()
     local_samples = representative_frames(msel.cpu().numpy(), flow_score, args.compare_n_per_mode)
-    compare = {"frames": [], "image_mse": [], "flow_rel_l2": [], "compat": compat,
+    compare = {"gt": os.path.basename(args.data), "gt_path": args.data,
+               "frames": [], "image_mse": [], "flow_rel_l2": [], "compat": compat,
                "epochs": args.epochs}
     if local_samples:
         local_idx = torch.tensor([i for i, _ in local_samples], device=DEV)
@@ -336,6 +339,7 @@ def main():
         }
 
     legacy = invert_frame(fi)
+    legacy.update(gt=os.path.basename(args.data), gt_path=args.data)
     sx_t, sy_t = legacy["true_shear_mm"]
     sx_r, sy_r = legacy["recovered_shear_mm"]
     mag_t = legacy["true_magnitude_mm"]
@@ -377,6 +381,8 @@ def main():
         for name in MODE_NAMES
     }
     multiframe = {
+        "gt": os.path.basename(args.data),
+        "gt_path": args.data,
         "data": args.data,
         "dataset_frames": int(N),
         "train_frames": int(N - nt),
@@ -410,14 +416,16 @@ def main():
         else:
             print(f"{label:12s} n= 0  (no frame above shear threshold)")
 
-    rep = {"data": args.data, "px": args.px, "sensor_M": int(sensor_M),
+    rep = {"gt": os.path.basename(args.data), "gt_path": args.data,
+           "data": args.data, "px": args.px, "sensor_M": int(sensor_M),
            "sensor_marker_side": args.sensor_marker_side, "marker_placement": args.marker_placement,
            "marker_pixel_fill": args.marker_pixel_fill, "marker_inset": args.marker_inset,
            "camera": cam.as_dict(),
            "dot_style": {"polarity": args.dot_polarity, "background": args.background,
                          "contrast": args.contrast, "saturate": args.saturate_dots},
            "compat": compat,
-           "inverse": {"frame": legacy["frame"], "mode": legacy["mode"],
+           "inverse": {"gt": os.path.basename(args.data), "gt_path": args.data,
+                       "frame": legacy["frame"], "mode": legacy["mode"],
                        "true_shear_mm": legacy["true_shear_mm"],
                        "recovered_shear_mm": legacy["recovered_shear_mm"],
                        "rel_err": legacy["rel_err"], "dir_err_deg": legacy["dir_err_deg"],

@@ -9,6 +9,7 @@ Layout:
       runs/            (training/eval outputs)
       docs/            (reports)
 """
+import os
 from pathlib import Path
 
 # src/novbts/paths.py -> parents[2] == repo root
@@ -16,9 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 DATA = ROOT / "data"
 ANALYTIC = DATA / "analytic"
-FEM = DATA / "fem"
-RUNS = ROOT / "runs"
-DOCS = ROOT / "docs"
+FEM = Path(os.environ.get("NOVBTS_FEM_DIR", DATA / "fem"))
+RUNS = Path(os.environ.get("NOVBTS_RUNS_DIR", ROOT / "runs"))
+DOCS = Path(os.environ.get("NOVBTS_DOCS_DIR", ROOT / "docs"))
 LOGS = ROOT / "logs"
 
 

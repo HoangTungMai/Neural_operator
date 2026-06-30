@@ -10,6 +10,7 @@ a preview montage.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -124,6 +125,14 @@ def main():
     fn = np.linalg.norm(flow, axis=1); dn = np.linalg.norm(dxy, axis=1)
     cos = (flow * dxy).sum(1) / (fn * dn + 1e-12)
     nz = dn > 1e-9
+    mode_names = ("normal", "stick", "partial_slip", "full_slip")
+    cos_by_mode = {}
+    for mode_id, mode_name in enumerate(mode_names):
+        sel = (mode == mode_id) & nz
+        cos_by_mode[mode_name] = {
+            "mean": float(cos[sel].mean()) if sel.any() else None,
+            "n_valid": int(sel.sum()),
+        }
     print(f"flow<->disp_xy alignment: mean cos={cos[nz].mean():.4f}  "
           f"(pixel flow faithfully encodes in-plane displacement)")
 
@@ -142,9 +151,16 @@ def main():
     rt_err = torch.cat(errs)                                                                  # [n,M] pixels
     def regime(sel):
         return float(rt_err[torch.tensor(sel, device=rt_err.device)].mean()) if sel.any() else float("nan")
-    rt = {"overall_px": float(rt_err.mean()),
-          "stick_px": regime(msub <= 1), "slip_px": regime(msub >= 2),
-          "p95_px": float(rt_err.flatten().quantile(0.95))}
+    rt = {
+        "overall_px": float(rt_err.mean()),
+        "stick_px": regime(msub <= 1),
+        "slip_px": regime(msub >= 2),
+        "by_mode_px": {
+            mode_name: regime(msub == mode_id)
+            for mode_id, mode_name in enumerate(mode_names)
+        },
+        "p95_px": float(rt_err.flatten().quantile(0.95)),
+    }
     print(f"round-trip track error (px): overall={rt['overall_px']:.3f}  "
           f"stick={rt['stick_px']:.3f}  slip={rt['slip_px']:.3f}  p95={rt['p95_px']:.3f}")
 
@@ -175,14 +191,17 @@ def main():
     phase_dir = RUNS / "phase5"; ensure(phase_dir)
     fs = np.where(mode == 3)[0]
     pick = int(fs[np.argmax(np.linalg.norm(disp[fs][:, :, :2], axis=(1, 2)))]) if len(fs) else 0
-    rep = {"data": args.data, "N": int(N), "field_M": int(field_M), "sensor_M": int(sensor_M),
+    rep = {"gt": os.path.basename(args.data), "gt_path": args.data,
+           "data": args.data, "N": int(N), "field_M": int(field_M), "sensor_M": int(sensor_M),
            "sensor_marker_side": args.sensor_marker_side, "marker_placement": args.marker_placement,
            "marker_pixel_fill": args.marker_pixel_fill, "marker_inset": args.marker_inset,
            "px": args.px,
            "camera": cam.as_dict(), "sigma": args.sigma,
            "dot_style": {"polarity": args.dot_polarity, "background": args.background,
                          "contrast": args.contrast, "saturate": args.saturate_dots},
-           "flow_disp_cos_mean": float(cos[nz].mean()), "round_trip": rt,
+           "flow_disp_cos_mean": float(cos[nz].mean()),
+           "flow_disp_cos_by_mode": cos_by_mode,
+           "round_trip": rt,
            "preview_frame": pick, "sensor_npz": str(out_npz)}
     try:
         import matplotlib

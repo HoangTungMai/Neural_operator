@@ -33,20 +33,17 @@ Fig 1 (sơ đồ pipeline) vẽ bằng TikZ ngay trong `main.tex`, không cần 
 ```bash
 pdflatex main && bibtex main && pdflatex main && pdflatex main
 ```
-> Máy hiện tại CHƯA cài texlive nên chưa compile thử được — đã lint cấu trúc (braces/env/cite/ref/figs đều OK).
+Máy hiện tại có TeX Live; bản cuối phải chạy đủ chuỗi trên và kiểm tra
+`main.log` không còn undefined citation/reference.
 
-## Việc cần làm trước khi nộp (đánh dấu `[TODO]`/đỏ trong `main.tex`)
+## Việc cần làm trước khi nộp
 1. **Tác giả + cơ quan** — điền `\author{...}` (đang là placeholder).
 2. **Acknowledgment** — điền nguồn tài trợ/lab.
-3. **Số inverse-từ-ảnh trung bình** — báo cáo ghi 2.1%/1.1° nhưng file trên đĩa
-   (`runs/phase5/sensor_inverse.json`) chỉ có 1 frame (10.6%/1.5°). Draft đang dùng
-   số xác minh được (raw-field 2.3%, hướng-ảnh ~1.5°). → Nên sinh lại số trung bình
-   nhiều frame rồi cập nhật câu + bỏ footnote TODO.
-4. **Kiểm tra page-count** — 4 hình + 2 bảng khá nhiều cho 6 trang. Nếu tràn:
+3. **Kiểm tra page-count** — 4 hình + 2 bảng khá nhiều cho 6 trang. Nếu tràn:
    bỏ Fig 2 (fidelity_speed) chuyển thành câu trong text, hoặc thu nhỏ Fig 5.
-5. **Verify 3 trích dẫn** đánh dấu `% VERIFY` trong `references.bib`
+4. **Verify 3 trích dẫn** đánh dấu `% VERIFY` trong `references.bib`
    (FOTS, DiffTactile, Taccel — venue/năm/tác giả).
-6. **Anonymize?** KSE thường review **không** ẩn danh (single-blind) → giữ tên tác
+5. **Anonymize?** KSE thường review **không** ẩn danh (single-blind) → giữ tên tác
    giả. Kiểm tra lại yêu cầu của special session phòng khi double-blind.
 
 ## Map số liệu → nguồn (để tự kiểm)
@@ -55,6 +52,10 @@ pdflatex main && bibtex main && pdflatex main && pdflatex main
 | Bake-off (Bảng I) | `runs/phase3_fem/vbts_baselines.json` |
 | RQ1/RQ2/RQ3 | `runs/phase3_fem/benchmark.json` |
 | Control autograd vs ES (Bảng II) | `runs/phase4/policy_servo.json` |
-| Sensor faithful/round-trip | `runs/phase5/sensor_{compare,compat}.json` |
-| Inverse raw-field 2.3% | `runs/phase3_fem/inverse_demo.json` |
-| Env gap-closed 87% / gradcheck | `runs/phase6/env_demo.json` |
+| Sensor cosine by regime / round-trip | `runs/phase5/sensor_build.json` |
+| Sensor inversion by regime | `runs/phase5/sensor_inverse_multiframe.json` |
+| Env gap-closed / gradcheck | `runs/phase6/env_demo.json` |
+
+Current realistic-geometry inverse-from-image numbers are multi-frame:
+`runs/phase5/sensor_inverse_multiframe.json` reports 20 frames total, with
+overall magnitude error `15.51%` and direction error `3.79°`.

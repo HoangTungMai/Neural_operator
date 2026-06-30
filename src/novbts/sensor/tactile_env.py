@@ -20,6 +20,7 @@ Geometry is kept to the simplest case (sphere indentor, geom=0) on purpose.
 """
 import argparse
 import json
+import os
 import time
 
 import numpy as np
@@ -357,7 +358,8 @@ def run_demo(S, args):
 
     phase_dir = RUNS / "phase6"; ensure(phase_dir)
     preview = rollout_preview(env, policy, phase_dir / "env_demo.png", k=args.preview_k)
-    out = {"data": args.data, "device": str(DEV), "geometry": "sphere-only",
+    out = {"gt": os.path.basename(args.data), "gt_path": args.data,
+           "data": args.data, "device": str(DEV), "geometry": "sphere-only",
            "n_train": len(env.pool_tr), "n_test": len(env.pool_te),
            "px": env.px, "markers": env.m, "feat_dim": env.feat_dim,
            "reward_mode": env.reward_mode, "noise_read": args.noise_read,
