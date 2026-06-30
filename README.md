@@ -1,10 +1,19 @@
 # novbts — Neural-operator surrogate for a vision-based tactile sensor
 
 An **FNO** learns marker displacement fields as a fast surrogate that replaces an
-expensive contact solver, for downstream RL. Ground truth comes from **PhysX
-Deformable-Body FEM** (Isaac Sim); **Hertz–Mindlin** provides an analytic
-validator. The headline result is the *field→field* operator framing, where the
-FNO decisively beats a per-point MLP (non-local elastic response).
+expensive contact solver, for downstream RL/control. The current paper headline
+numbers are produced on the realistic **IPC/UIPC** thin-gel dataset:
+
+`data/uipc/shear_res24_avg_swept_REALISTIC.npz`
+
+The headline benchmark is **not** `operator/field2field.py`. It is
+`operator/fem_benchmark.py`, which imports the shared model definitions but loads
+the IPC/UIPC `.npz` directly and reports the paper metrics (for example FNO
+`0.041 / 1.6 deg` and `12.14x` over the per-point MLP).
+
+`operator/field2field.py` is retained as an analytic Hertz--Mindlin
+proof-of-concept of the same field-to-field framing. It should not be used to
+reproduce the paper headline table.
 
 ## Layout
 
@@ -17,8 +26,11 @@ src/novbts/
     data_gen.py          analytic dataset generator (train/test/OOD splits)
     isaac_extract_normal.py   PhysX-FEM GT, normal indentation  (runs in Docker)
     isaac_extract_shear.py    PhysX-FEM GT, shear/slip          (runs in Docker)
+    tacex_uipc_extract_shear.py IPC/UIPC thin-gel shear generator (TacEx-style)
   operator/
-    field2field.py       HEADLINE field→field operator (FNO vs MLP)
+    fem_benchmark.py     PAPER HEADLINE benchmark on realistic IPC/UIPC .npz
+    vbts_baselines.py    VBTS/classical/neural baseline bakeoff on IPC/UIPC GT
+    field2field.py       analytic field→field PoC (Hertz--Mindlin, not paper headline)
     param2field.py       param→field framing (ablation) + slip heads
     eval_rq.py           RQ1–RQ3 evaluation (accuracy / generalization / speed)
     fem_train_compare.py train on coarse- vs fine-mesh FEM GT, eval on fine
@@ -28,10 +40,10 @@ src/novbts/
     compare_shear.py     coarse vs fine shear GT (stick-radius / resolution)
   report/make_pdf.py     render the Phase-3 report to PDF (-> docs/)
 
-infra/                   Dockerfile.fem, setup_isaac.sh (Isaac Sim env)
+infra/                   Isaac/IPC generation scripts + realistic acceptance checker
 scripts/archive/         frozen one-off probes & superseded scripts
 docs/                    reports (.md live, .pdf generated); docs/archive/ older gates
-data/    (gitignored)    analytic/ (Hertz–Mindlin)  ·  fem/ (PhysX GT + chunks/)
+data/    (gitignored)    uipc/ realistic GT  ·  analytic/ PoC  ·  fem/ legacy PhysX
 runs/    (gitignored)    training/eval outputs  ·  convergence/ (mesh study)
 logs/    (gitignored)
 ```
@@ -47,21 +59,31 @@ Paths resolve from the repo root via `novbts.paths`, so modules run from any CWD
 ## Run (no Isaac needed)
 
 ```bash
-python -m novbts.operator.field2field        # headline field→field FNO vs MLP
-python -m novbts.operator.fem_train_compare   # coarse- vs fine-mesh FEM GT
-python -m novbts.operator.eval_rq             # RQ1–RQ3 tables + fidelity-speed
-python -m novbts.report.make_pdf              # regenerate docs/bao_cao_giai_doan3.pdf
+python -m novbts.operator.fem_benchmark \
+  --data data/uipc/shear_res24_avg_swept_REALISTIC.npz
+                                                # paper headline RQ1/RQ2/RQ3 on IPC/UIPC GT
+python -m novbts.operator.vbts_baselines \
+  --data data/uipc/shear_res24_avg_swept_REALISTIC.npz
+                                                # paper baseline bakeoff on same IPC/UIPC split
+python -m novbts.operator.field2field           # analytic field→field PoC only
+python -m novbts.report.make_kse_figs           # regenerate KSE figures from current runs/
+python infra/verify_realistic_reground.py       # acceptance check for paper/data/figures
 ```
 
 ## Data
 
+- `data/uipc/shear_res24_avg_swept_REALISTIC.npz` — current IPC/UIPC paper GT:
+  thin gel `20 x 20 x 3 mm`, res-24, marker grid `32 x 32`, `N=2520`, `K=3`
+  averaged replicates, deterministic `2120/400` train/test split.
 - `data/analytic/` — Hertz–Mindlin train (16k) / val / test / OOD splits, side-32 marker grid.
+  Used by `field2field.py` as a proof-of-concept, not as the paper headline GT.
 - `data/fem/normal.npz` — PhysX-FEM ground truth, normal indentation (40 frames).
 - `data/fem/shear_fine.npz`, `data/fem/shear_coarse.npz` — shear GT at 50×50×20 mm,
-  res-24 fine vs default coarse mesh (200 frames each, side-32 probe grid).
+  res-24 fine vs default coarse mesh (200 frames each, side-32 probe grid). These are
+  legacy PhysX artifacts and are not the current paper headline data.
 - `data/fem/chunks/` — raw per-seed FEM runs (`fem_{fine,coarse}_s43..s46`), kept to
   rebuild a strictly *paired* fine-vs-coarse set if needed.
 
-FEM ground truth is generated inside the `isaac-lab-fem` Docker image; the extractor
-scripts run standalone in the container (no `novbts` import) and log progress to a
-mounted file because Isaac swallows stdout.
+IPC/UIPC ground truth is generated by the TacEx-style pipeline and aggregated before
+downstream training/evaluation. PhysX/Isaac scripts remain in the tree for legacy
+experiments and archived reports.
