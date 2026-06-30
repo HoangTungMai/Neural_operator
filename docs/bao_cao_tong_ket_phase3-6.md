@@ -14,7 +14,7 @@ Dự án hiện chứng minh một pipeline VBTS surrogate gồm:
 2. **FNO field-to-field:** FNO đạt relL2 **0.041**, hướng **1.6 deg**, thắng MLP **12.14x** trên realistic GT.
 3. **Differentiable policy:** backprop qua FNO đóng băng đạt chất lượng tương đương ES/oracle nhưng dùng ít forward eval hơn nhiều.
 4. **Sensor pipeline:** image-space marker renderer nối được với FNO; inverse từ ảnh multi-frame hoạt động, nhưng normal-only còn yếu.
-5. **Differentiable env:** reward gap closed **99.93%**; gradient finite-difference diagnostic chưa đạt pass formal, nên chỉ claim gradients flow/sanity check.
+5. **Differentiable env:** reward gap closed **99.93%**; finite-difference diagnostic trên noisy image reward có relative error **5.21%** và **không pass formal gradcheck**, nên chỉ dùng như sanity check gradient-flow cục bộ cho one-step image-reward env.
 
 Các headline tiền-reground về geometry dày, PhysX speed, force inverse một-frame, và env demo cũ đã bị supersede.
 
@@ -87,10 +87,10 @@ RQ3:
 
 | Metric | Value |
 |---|---:|
-| FNO throughput | **7839 fps** |
+| FNO throughput | **7803 fps** |
 | GT single-solve throughput | **0.094 fps** |
 | GT K=3 target throughput | **0.031 fps** |
-| Speedup vs single solve | **83204x** |
+| Speedup vs single solve | **82827x** |
 
 Architecture/baseline comparison:
 
@@ -101,7 +101,7 @@ Architecture/baseline comparison:
 | Taxim/FOTS-style | 0.229 | 5.1 deg | 5.54x |
 | MLP | 0.501 | 83.9 deg | 12.14x |
 | DeepONet | 0.046 | 1.9 deg | 1.12x |
-| U-Net | 0.058 | 2.7 deg | 1.42x |
+| U-Net | 0.067 | 3.5 deg | 1.63x |
 | Galerkin | 0.091 | 2.4 deg | 2.19x |
 | **FNO** | **0.041** | **1.6 deg** | **1.00x** |
 
@@ -117,14 +117,14 @@ Nguồn: `runs/phase4/policy_servo.json`.
 |---|---:|---:|---:|
 | Final loss | **5.70e-10** | 6.21e-10 | 3.04e-11 |
 | Forward evaluations | **300** | 19200 | - |
-| Wall time | **13.21 s** | 323.95 s | - |
+| Wall time | **13.21 s** | 317.75 s | - |
 | Reaches target | **21** | 1771 | - |
 
 Diễn giải:
 
 - Autograd dùng **64x** ít forward eval hơn ES.
 - Đạt target với **84x** fewer iterations/eval checkpoints theo metric hiện hành.
-- Wall-clock nhanh hơn **24.5x** trong cấu hình demo.
+- Wall-clock nhanh hơn **24.1x** trong cấu hình demo.
 
 ---
 
@@ -180,7 +180,7 @@ Nguồn: `runs/phase6/env_demo.json`.
 | Finite-difference relative error | **5.21%** |
 | Formal gradcheck passed | **false** |
 
-Claim nên dùng: env nối FNO + sensor + reward có gradient flow và policy demo hoạt động. Không nên nói đây là chứng minh gradient chính xác tuyệt đối; finite-difference diagnostic còn fail ngưỡng formal.
+Claim nên dùng: env nối FNO + sensor + reward có gradient flow và policy demo hoạt động; finite-difference diagnostic trên noisy image-reward env hiện tại là sanity check, không phải formal proof. Không nên mở rộng claim này sang multi-step contact dynamics.
 
 ---
 

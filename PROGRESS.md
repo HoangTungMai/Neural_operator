@@ -1,6 +1,69 @@
 # PROGRESS: realistic VBTS gel geometry reground
 
-## Latest checkpoint (2026-06-30 00:20 +07)
+## Latest checkpoint (2026-06-30 GPU rerun +07)
+
+User noticed sandbox Python was not using GPU. Confirmed:
+
+- sandbox torch CUDA: unavailable
+- `rtk proxy .venv-gate2/bin/python`: CUDA available on NVIDIA RTX 2000 Ada
+- stopped the accidental CPU benchmark and reran runnable downstream stages via
+  `rtk proxy`
+
+GPU-canonical downstream refresh:
+
+- `runs/phase3_fem/benchmark.json`
+  - FNO rel-L2 overall `0.041`, direction `1.6 deg`
+  - MLP rel-L2 overall `0.501`, direction `83.9 deg`
+  - FNO/MLP rel-L2 advantage `12.14x`
+  - RQ3 FNO `7803 fps`, fair GT solver `0.094 fps`, K3 target `0.031 fps`
+  - speedup vs fair single solve `82827x`
+- `runs/phase3_fem/vbts_baselines.json`
+  - U-Net updated to rel-L2 `0.067`, direction `3.5 deg`, FNO advantage `1.63x`
+- `runs/phase4/policy_servo.json`
+  - autograd final `5.70e-10`, ES final `6.21e-10`
+  - autograd reaches target in `21` fwd queries vs ES mean `1771`
+  - wall `13.21 s` vs `317.75 s` (`24.1x`)
+- `runs/phase5/*`
+  - sensor build/inverse regenerated on realistic data with current renderer
+- `runs/phase6/env_demo.json`
+  - policy closes `99.93%` random-to-oracle reward gap
+  - finite-difference diagnostic rel error `5.21%`, `passed=false`
+  - paper/report now phrase this as gradient-flow sanity check, not formal pass
+
+Figures regenerated from the GPU-current runs:
+
+- `docs/kse2026/figs/fidelity_speed.png`
+- `docs/kse2026/figs/policy_servo_curve.png`
+- `docs/kse2026/figs/sensor_gt_vs_fno.png`
+
+Phase 7 trajectory/loading-history design started:
+
+- Added UIPC trajectory support to
+  `src/novbts/groundtruth/tacex_uipc_extract_shear.py`
+  - `--save-trajectory`, `--traj-steps`, `--load-mode`
+  - batch rows may include sixth column `linear|ortho|reverse`
+  - output keeps legacy keys `disp_traj`, `traj_fracs`, `load_mode`,
+    `load_mode_names`
+- Updated `src/novbts/groundtruth/aggregate_uipc_replicates.py` to average
+  `disp_traj` across K UIPC reps and preserve load-mode metadata.
+- Moved `novbts.operator.loading_history` default output to `runs/phase7`.
+- Added `infra/gen_uipc_trajectory_phase7.sh`:
+  - endpoint-controlled UIPC trajectory GT
+  - same endpoint repeated under `linear/ortho/reverse`
+  - aggregate to `data/uipc/trajectory_phase7/shear_res24_traj_REALISTIC.npz`
+  - run loading-history benchmark.
+- Added handoff/spec: `codex/TASK_phase7_uipc_trajectory_history.md`.
+- Validation so far: Python compile OK and synthetic aggregator test confirms
+  `disp_traj` merge shape/metadata.
+- Started `infra/gen_uipc_trajectory_phase7.sh 12 3 9`, then stopped it by
+  request after clarifying the historical trajectory pipeline is not useful for
+  the current evidence path. Partial output only:
+  `data/uipc/trajectory_phase7/sweep` has `42/108` replicate files. Do not use
+  this partial trajectory dataset as paper evidence.
+- Later resumed the same Phase 7 trajectory job on request. At commit time it is
+  still an uncommitted/untracked run artifact, not part of the paper evidence.
+
+## Previous checkpoint (2026-06-30 00:20 +07)
 
 Realistic geometry reground da pass end-to-end acceptance.
 
@@ -883,3 +946,16 @@ rtk grep "0.975|0.341|50\\\\times50|490/430|flat-punch" docs/kse2026 src runs
 - Verification:
   - stale headline grep over current reports is clean for old numeric literals.
   - `infra/verify_realistic_reground.py` passes `REALISTIC_REGROUND_ACCEPTANCE_OK`.
+
+## 2026-06-30 runs image refresh
+
+- Cleaned `runs/` to keep only current realistic outputs used by paper/verifier.
+- Regenerated run figures from realistic outputs:
+  - `runs/phase3_fem/fidelity_speed.png` from `runs/phase3_fem/benchmark.json`
+  - `runs/phase4/policy_servo_curve.png` from `runs/phase4/policy_servo.json`
+  - `runs/phase5/preview.png` and `runs/phase5/test_samples.png` from realistic sensor build
+  - `runs/phase6/env_demo.png` from current tactile env demo
+- Latest Phase 6 env demo:
+  - reward gap closed `99.88%`
+  - finite-difference diagnostic rel error `1.56e-4`
+  - `gradcheck.passed=true`

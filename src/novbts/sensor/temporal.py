@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--contrast", type=float, default=0.58)
     ap.add_argument("--gif-interp", type=int, default=4, help="interpolated sub-steps between snapshots (smoother GIF)")
     ap.add_argument("--gif-ms", type=int, default=120, help="GIF frame duration (ms)")
+    ap.add_argument("--out-dir", default="phase7", help="subdirectory under runs/")
     args = ap.parse_args()
 
     z = np.load(args.data, allow_pickle=True)
@@ -83,7 +84,7 @@ def main():
     rep = {"data": args.data, "N": int(N), "T": int(T), "fracs": fracs.tolist(),
            "picks": {LOAD_MODES[lm]: fi for lm, fi in picks}, "slip_curves": slip_curves}
 
-    phase_dir = RUNS / "phase6"; ensure(phase_dir)
+    phase_dir = RUNS / args.out_dir; ensure(phase_dir)
     try:
         import matplotlib
         matplotlib.use("Agg")

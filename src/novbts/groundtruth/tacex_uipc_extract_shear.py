@@ -104,6 +104,12 @@ parser.add_argument("--settle-steps", type=int, default=10, help="frames to sett
 parser.add_argument("--shear-steps", type=int, default=80, help="frames for the lateral drag")
 parser.add_argument("--shear-settle", type=int, default=10, help="frames to settle after shear")
 parser.add_argument("--dt", type=float, default=0.01, help="UIPC timestep (s)")
+parser.add_argument("--save-trajectory", action="store_true",
+                    help="store marker-field snapshots along the lateral loading path")
+parser.add_argument("--traj-steps", type=int, default=8,
+                    help="trajectory snapshots including normal state f=0 and final f=1")
+parser.add_argument("--load-mode", choices=["linear", "ortho", "reverse"], default="linear",
+                    help="lateral loading-path shape; same endpoint, different path")
 # --- IPC convergence knobs --------------------------------------------------
 parser.add_argument("--gel-res", type=int, default=12,
                     help="gel structured-mesh resolution (cells/footprint-axis); MESH refinement knob")
@@ -189,6 +195,7 @@ GEL_TOP_Z = GEL[2]
 MODE_NAMES = ["normal", "stick", "partial_slip", "full_slip"]
 G_STICK, G_PARTIAL, G_FULL = 0.04, 0.48, 1.0
 GEOM_CODE = {"sphere": 0, "flat": 1, "cylinder": 2, "mesh": 3}
+LOAD_MODES = ["linear", "ortho", "reverse"]
 
 
 def label_mode(shear_mag, mu):
@@ -418,10 +425,23 @@ def build_schedule():
         sched.append((0.0, 0.0, -z_down))
     for k in range(n_shear):
         f = (k + 1) / n_shear
-        sched.append((sx * f, sy * f, -z_down))
+        px, py = path_xy(f, sx, sy, args.load_mode)
+        sched.append((px, py, -z_down))
     for _ in range(n_shear_settle):
         sched.append((sx, sy, -z_down))
     return sched, gap
+
+
+def path_xy(f, sx, sy, mode):
+    """Endpoint-preserving loading paths, matching the legacy PhysX trajectory schema."""
+    if mode == "ortho":
+        if f <= 0.5:
+            return sx * (f / 0.5), 0.0
+        return sx, sy * ((f - 0.5) / 0.5)
+    if mode == "reverse":
+        s = 1.5 * (f / 0.66) if f <= 0.66 else 1.5 - 0.5 * ((f - 0.66) / 0.34)
+        return sx * s, sy * s
+    return sx * f, sy * f
 
 
 def shear_xy():
@@ -567,6 +587,24 @@ def make_uipc_cfg(eps_velocity):
     )
 
 
+def _trajectory_snap_indices():
+    if not args.save_trajectory:
+        return []
+    if args.traj_steps < 2:
+        raise SystemExit("--traj-steps must be >=2 when --save-trajectory is set")
+    n_press, n_settle = args.press_steps, args.settle_steps
+    n_shear = args.shear_steps
+    shear_start = n_press + n_settle
+    out = []
+    for frac in np.linspace(0.0, 1.0, args.traj_steps):
+        if frac <= 1e-9:
+            idx = shear_start - 1
+        else:
+            idx = shear_start + int(np.ceil(frac * n_shear)) - 1
+        out.append(max(0, idx))
+    return out
+
+
 def run_one(sim, gel_res, eps_velocity, coords, verbose=False):
     """Run a single (gel_res, eps_velocity) indent+shear; return field + scalars."""
     schedule, _gap = build_schedule()
@@ -591,8 +629,19 @@ def run_one(sim, gel_res, eps_velocity, coords, verbose=False):
 
     t0 = time.perf_counter()
     n_total = len(schedule)
+    traj_indices = _trajectory_snap_indices()
+    traj_fields = []
+    traj_cursor = 0
     for step in range(n_total):
         uipc_sim.step()
+        if traj_cursor < len(traj_indices) and step >= traj_indices[traj_cursor]:
+            cur = handles["gel_slot"].geometry().positions().view().reshape(-1, 3)
+            rest = handles["gel_pos0"]
+            disp_step = cur - rest
+            top = np.where(rest[:, 2] >= rest[:, 2].max() - 1e-6)[0]
+            marker_step, _ = sample_to_markers(rest[top, :2], disp_step[top], coords)
+            traj_fields.append(marker_step.astype(np.float32))
+            traj_cursor += 1
         if verbose and (step % 20 == 0 or step == n_total - 1):
             cur = handles["gel_slot"].geometry().positions().view().reshape(-1, 3)
             d = cur - handles["gel_pos0"]
@@ -622,6 +671,7 @@ def run_one(sim, gel_res, eps_velocity, coords, verbose=False):
         "net_tang_y": float(top_markers[:, 1].mean()),
         "solve_time_s": float(solve_time),
         "marker_sampling": marker_sampling,
+        "load_mode": args.load_mode,
     }
     # free the engine before the next setting (fresh UipcSim per run). In batch
     # mode (many runs/process) also drop the stale callback + force GC so libuipc
@@ -634,7 +684,9 @@ def run_one(sim, gel_res, eps_velocity, coords, verbose=False):
     del uipc_sim
     import gc
     gc.collect()
-    return top_markers.astype(np.float32), scalars
+    return top_markers.astype(np.float32), scalars, (
+        np.stack(traj_fields).astype(np.float32) if traj_fields else None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -656,7 +708,7 @@ def channel_rel_l2(field_a, field_b):
 # ---------------------------------------------------------------------------
 # Save (PhysX-compatible npz)
 # ---------------------------------------------------------------------------
-def save_field(out_dir, coords, field, scalars):
+def save_field(out_dir, coords, field, scalars, traj=None):
     os.makedirs(out_dir, exist_ok=True)
     sx, sy = shear_xy()
     # params row layout matches isaac_extract_shear.py:
@@ -669,8 +721,7 @@ def save_field(out_dir, coords, field, scalars):
     # production sweeps pass --drive-ratio explicitly, so their labels match PhysX.
     mode_value = -1 if args.drive_ratio is None else label_mode(float(args.drive_ratio) * args.mu, args.mu)
     mode = np.array([mode_value], dtype=np.int32)
-    np.savez_compressed(
-        os.path.join(out_dir, "uipc_gt_shear.npz"),
+    payload = dict(
         params=params,
         coords=coords.astype(np.float32),
         disp=field[None, ...].astype(np.float32),  # (1, M, 3)
@@ -683,7 +734,16 @@ def save_field(out_dir, coords, field, scalars):
         contact_resistance=np.array([args.contact_resistance], dtype=np.float32),
         n_tet_verts=np.array([scalars["n_tet_verts"]], dtype=np.int32),
         marker_sampling=np.array([scalars.get("marker_sampling", "unknown")], dtype="U32"),
+        load_mode=np.array([LOAD_MODES.index(scalars.get("load_mode", args.load_mode))], dtype=np.int32),
+        load_mode_names=np.array(",".join(LOAD_MODES), dtype="U64"),
         meta=np.array("gt=uipc_ipc_SHEAR; tacex_uipc; units=m; geom=sphere", dtype="U96"),
+    )
+    if traj is not None:
+        payload["disp_traj"] = traj[None, ...].astype(np.float32)
+        payload["traj_fracs"] = np.linspace(0.0, 1.0, traj.shape[0]).astype(np.float32)
+    np.savez_compressed(
+        os.path.join(out_dir, "uipc_gt_shear.npz"),
+        **payload,
     )
     flog(f"  saved field -> {os.path.join(out_dir, 'uipc_gt_shear.npz')}")
 
@@ -711,8 +771,10 @@ def main():
 
     if args.smoke:
         flog(f"SMOKE: gel_res={args.gel_res} eps_velocity={args.eps_velocity}")
-        field, sc = run_one(sim, args.gel_res, args.eps_velocity, coords, verbose=True)
+        field, sc, traj = run_one(sim, args.gel_res, args.eps_velocity, coords, verbose=True)
         print("SMOKE uipc:", "top_markers", field.shape,
+              "traj", None if traj is None else traj.shape,
+              "load_mode", args.load_mode,
               "peak_uz", round(sc["peak_uz"], 5),
               "max|tang|", round(sc["max_tang"], 5),
               "mean|tang|", round(sc["mean_tang"], 5),
@@ -723,8 +785,8 @@ def main():
 
     if args.single:
         flog(f"SINGLE: gel_res={args.gel_res} eps_velocity={args.eps_velocity}")
-        field, sc = run_one(sim, args.gel_res, args.eps_velocity, coords, verbose=True)
-        save_field(args.out, coords, field, sc)
+        field, sc, traj = run_one(sim, args.gel_res, args.eps_velocity, coords, verbose=True)
+        save_field(args.out, coords, field, sc, traj)
         print("SINGLE_UIPC_OK", sc, flush=True)
         _hard_exit(0)
 
@@ -737,23 +799,25 @@ def main():
             for line in fh:
                 t = line.split()
                 if len(t) >= 5:
-                    rows.append((int(t[0]), float(t[1]), float(t[2]), float(t[3]), float(t[4])))
+                    lm = t[5] if len(t) >= 6 else args.load_mode
+                    rows.append((int(t[0]), float(t[1]), float(t[2]), float(t[3]), float(t[4]), lm))
         flog(f"BATCH: {len(rows)} frames x {args.batch_reps} reps, gel_res={args.gel_res} "
              f"eps={args.eps_velocity} R={args.indentor_r} mu={args.mu} E={args.youngs}")
         base_seed = args.seed
         ndone = 0
-        for (fi, depth, g, sx, sy) in rows:
+        for (fi, depth, g, sx, sy, lm) in rows:
             args.depth = depth                 # mutate globals -> build_schedule()/shear_xy()/save_field read them
             args.drive_ratio = g
             args.shear_x = sx
             args.shear_y = sy
+            args.load_mode = lm
             for r in range(1, args.batch_reps + 1):
                 out = os.path.join(args.out, f"frame_{fi:03d}", f"rep_{r}")
                 if os.path.exists(os.path.join(out, "uipc_gt_shear.npz")):
                     ndone += 1; continue
                 args.seed = base_seed + 1000 * r
-                field, sc = run_one(sim, args.gel_res, args.eps_velocity, coords, verbose=False)
-                save_field(out, coords, field, sc)
+                field, sc, traj = run_one(sim, args.gel_res, args.eps_velocity, coords, verbose=False)
+                save_field(out, coords, field, sc, traj)
                 ndone += 1
                 flog(f"  batch frame {fi} rep {r}: peak_uz={sc['peak_uz']:.5f} "
                      f"mean_tang={sc['mean_tang']:.5f} t={sc['solve_time_s']:.1f}s done={ndone}")

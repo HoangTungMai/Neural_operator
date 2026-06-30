@@ -86,7 +86,7 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
         _same(ref["coords"], d["coords"], "coords", p)
         for key in (
             "gel_res", "eps_velocity", "velocity_tol", "d_hat",
-            "contact_resistance", "marker_sampling",
+            "contact_resistance", "marker_sampling", "load_mode", "traj_fracs",
         ):
             if key in ref.files and key in d.files:
                 _same(np.asarray(ref[key]), np.asarray(d[key]), key, p)
@@ -94,6 +94,18 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
     fields = np.stack([np.asarray(d["disp"], dtype=np.float32)[0] for d in loaded], axis=0)
     mean_field = fields.mean(axis=0, dtype=np.float64).astype(np.float32)
     noise = replicate_noise(fields)
+    traj_mean = None
+    traj_noise = None
+    if "disp_traj" in ref.files:
+        for p, d in zip(paths, loaded):
+            if "disp_traj" not in d.files:
+                raise SystemExit(f"{p} missing disp_traj while first replicate has it")
+        traj_fields = np.stack([np.asarray(d["disp_traj"], dtype=np.float32)[0] for d in loaded], axis=0)
+        traj_mean = traj_fields.mean(axis=0, dtype=np.float64).astype(np.float32)
+        # Noise over the whole trajectory tensor, useful for Phase 7 provenance.
+        centered = traj_fields - traj_mean[None, ...]
+        denom = np.linalg.norm(traj_mean.reshape(-1)) + 1e-12
+        traj_noise = float(np.sqrt(np.mean([np.linalg.norm(x.reshape(-1)) ** 2 for x in centered])) / denom)
 
     params = np.asarray(ref["params"], dtype=np.float32)
     modes = np.asarray(ref["mode"], dtype=np.int32)
@@ -121,9 +133,13 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
     for key in (
         "gel_res", "eps_velocity", "velocity_tol", "d_hat",
         "contact_resistance", "n_tet_verts", "marker_sampling",
+        "load_mode", "load_mode_names", "traj_fracs",
     ):
         if key in ref.files:
             out[key] = np.asarray(ref[key]).copy()
+    if traj_mean is not None:
+        out["disp_traj"] = traj_mean[None, ...].astype(np.float32)
+        out["rep_noise_traj"] = np.array([traj_noise], dtype=np.float32)
     for key, value in noise.items():
         out[key] = np.array([value], dtype=np.float32)
     return out
@@ -213,15 +229,23 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
         "source_frame_dir": np.concatenate([r["source_frame_dir"] for r in rows], axis=0),
         "meta": np.array("gt=uipc_ipc_SHEAR_sweep; rep_averaged; tacex_uipc; units=m", dtype="U96"),
     }
+    if "disp_traj" in rows[0]:
+        merged["disp_traj"] = np.concatenate([r["disp_traj"] for r in rows], axis=0).astype(np.float32)
+        merged["rep_noise_traj"] = np.concatenate([r["rep_noise_traj"] for r in rows], axis=0).astype(np.float32)
     if test_size is not None:
         merged["split_test_size"] = np.array([test_size], dtype=np.int32)
         merged["split_shuffle_seed"] = np.array([shuffle_seed], dtype=np.int64)
     for key in (
         "gel_res", "eps_velocity", "velocity_tol", "d_hat",
         "contact_resistance", "n_tet_verts", "marker_sampling",
+        "load_mode", "load_mode_names", "traj_fracs",
     ):
         if key in rows[0]:
-            merged[key] = np.concatenate([r[key] for r in rows], axis=0)
+            vals = [r[key] for r in rows]
+            if key in ("load_mode_names", "traj_fracs"):
+                merged[key] = vals[0].copy()
+            else:
+                merged[key] = np.concatenate(vals, axis=0)
     save_npz(out_path, merged)
     print(f"aggregated {len(rows)} averaged UIPC frames -> {out_path}")
     if skipped:

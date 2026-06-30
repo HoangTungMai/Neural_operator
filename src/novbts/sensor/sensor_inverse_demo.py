@@ -9,7 +9,8 @@
     image (not the raw displacement field). Gradients flow image <- renderer <- FNO
     <- action, so the whole sensor pipeline is differentiable end-to-end.
 
-  python -m novbts.sensor.sensor_inverse_demo --data data/fem/shear_fine_swept_normaug.npz
+  python -m novbts.sensor.sensor_inverse_demo \
+    --data data/uipc/shear_res24_avg_swept_REALISTIC.npz
 """
 import argparse
 import json
@@ -39,6 +40,10 @@ def representative_frames(mode, score, n_per_mode):
         order = idx[np.argsort(score[idx])]
         if len(order) <= n_per_mode:
             frames = order
+        elif n_per_mode == 1:
+            # One visual sample per mode should be representative but visually
+            # readable; avoid the low-shear tail where image differences vanish.
+            frames = order[[int(round(0.70 * (len(order) - 1)))]]
         else:
             locs = np.linspace(0.22, 0.86, n_per_mode)
             locs = np.clip(np.round(locs * (len(order) - 1)).astype(int), 0, len(order) - 1)
@@ -100,7 +105,7 @@ def main():
     ap.add_argument("--background", type=float, default=0.72)
     ap.add_argument("--contrast", type=float, default=0.58)
     ap.add_argument("--saturate-dots", action=argparse.BooleanOptionalAction, default=True)
-    ap.add_argument("--compare-n-per-mode", type=int, default=2,
+    ap.add_argument("--compare-n-per-mode", type=int, default=1,
                     help="GT-vs-FNO visual comparison samples per contact mode")
     ap.add_argument("--skip-inverse", action="store_true",
                     help="only train FNO and render GT-vs-FNO comparison, skip image inverse optimization")
@@ -214,10 +219,11 @@ def main():
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             nrows = len(local_samples)
-            fig, axes = plt.subplots(nrows, 4, figsize=(12.5, 2.8 * nrows), squeeze=False)
+            fig, axes = plt.subplots(nrows, 4, figsize=(7.2, 1.85 * nrows), squeeze=False)
             im_kw = dict(cmap="gray", vmin=0.0, vmax=1.0, interpolation="none")
             diff_max = max(float(img_err.max()), 1e-6)
             pr_np = pix_rest[0].cpu().numpy()
+            col_titles = ("GT image", "FNO image", "|GT-FNO| image", "flow residual")
             for r in range(nrows):
                 frame_i = compare["frames"][r]["frame"]
                 mode_name = compare["frames"][r]["mode"]
@@ -226,20 +232,27 @@ def main():
                 err_np = img_err[r, 0].cpu().numpy()
                 res_np = flow_err[r].cpu().numpy()
                 axes[r, 0].imshow(gt_np, **im_kw)
-                axes[r, 0].set_title(f"GT image\n{mode_name} frame {frame_i}", fontsize=9)
+                axes[r, 0].set_ylabel(f"{mode_name}\n#{frame_i}", fontsize=8)
                 axes[r, 1].imshow(pred_np, **im_kw)
-                axes[r, 1].set_title("FNO image", fontsize=9)
                 axes[r, 2].imshow(err_np, cmap="magma", vmin=0.0, vmax=diff_max, interpolation="none")
-                axes[r, 2].set_title(f"|GT-FNO|\nMSE={compare['image_mse'][r]:.2e}", fontsize=9)
+                axes[r, 2].text(0.04, 0.93, f"MSE={compare['image_mse'][r]:.1e}",
+                                transform=axes[r, 2].transAxes, color="white",
+                                fontsize=7, va="top")
                 axes[r, 3].imshow(gt_np, **im_kw)
                 axes[r, 3].quiver(pr_np[:, 0], pr_np[:, 1], res_np[:, 0], -res_np[:, 1],
-                                  color="cyan", scale_units="xy", angles="xy", scale=0.35, width=0.004)
-                axes[r, 3].set_title(f"flow residual\nrelL2={compare['flow_rel_l2'][r]:.2f}", fontsize=9)
+                                  color="cyan", scale_units="xy", angles="xy", scale=0.35, width=0.005)
+                axes[r, 3].text(0.04, 0.93, f"relL2={compare['flow_rel_l2'][r]:.2f}",
+                                transform=axes[r, 3].transAxes, color="black",
+                                fontsize=7, va="top",
+                                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=1.5))
                 for ax in axes[r]:
                     ax.set_aspect("equal", adjustable="box")
                     ax.set_xlim(0, args.px); ax.set_ylim(args.px, 0)
                     ax.set_xticks([]); ax.set_yticks([])
-            fig.tight_layout()
+                if r == 0:
+                    for c, title in enumerate(col_titles):
+                        axes[r, c].set_title(title, fontsize=8.5)
+            fig.tight_layout(pad=0.35, h_pad=0.45, w_pad=0.35)
             fig.savefig(phase_dir / "gt_vs_fno_samples.png", dpi=150)
             plt.close(fig)
             compare["plot"] = str(phase_dir / "gt_vs_fno_samples.png")

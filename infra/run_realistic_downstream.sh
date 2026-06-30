@@ -123,7 +123,7 @@ done
   --marker-pixel-fill 0.75 --marker-inset 0.06 \
   --working-dist 0.05 --sigma 1.35 --dot-polarity dark \
   --background 0.72 --contrast 0.58 --saturate-dots \
-  --compare-n-per-mode 2 --steps 400 --opt-lr 0.05 \
+  --compare-n-per-mode 1 --steps 400 --opt-lr 0.05 \
   --inverse-n-per-mode 5 --inverse-restarts 8 \
   --inverse-min-shear-frac 0.01
 

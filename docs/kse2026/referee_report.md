@@ -22,7 +22,7 @@ Paper hiện đã qua các lỗi nặng của draft cũ: headline metrics không
 
 1. **Ground truth được reground rõ ràng.** Dataset final `data/uipc/shear_res24_avg_swept_REALISTIC.npz` có N=2520, split 2120/400, mode split công khai, K=3 averaging, và solver/contact parameters ghi được.
 2. **RQ1 mạnh và sạch hơn bản cũ.** FNO đạt relL2 **0.041**, hướng **1.6 deg**, thắng MLP **12.14x**; slip macro-F1 **0.940** và binary slip-F1 **0.980**.
-3. **RQ3 giờ cùng thước đo với GT hiện hành.** FNO **7839 fps** vs IPC/UIPC single solve **0.094 fps**, speedup **83204x**; không còn trộn PhysX speed cũ.
+3. **RQ3 giờ cùng thước đo với GT hiện hành.** FNO **7803 fps** vs IPC/UIPC single solve **0.094 fps**, speedup **82827x**; không còn trộn PhysX speed cũ.
 4. **Differentiable story có artifact đủ.** Phase 4 policy có autograd vs ES, Phase 5 có renderer/inverse multi-frame, Phase 6 có env demo và finite-difference diagnostic.
 5. **Limitations đã đáng tin hơn.** Paper không còn claim flat-punch OOD, không gọi sensor pipeline là physical calibration, và ghi rõ normal-only inverse yếu.
 
@@ -54,11 +54,11 @@ Overall multi-frame inverse là **15.51%** magnitude và **3.79 deg**, nhưng no
 
 **Khuyến nghị:** giữ RQ5 ở mức “image-space loop works best in shear-rich regimes”; không dùng nó như claim force reconstruction tổng quát.
 
-### E. Env gradient diagnostic chưa pass formal
+### E. Env gradient diagnostic chỉ là local check
 
-Phase 6 reward gap closed **99.93%**, nhưng finite-difference relative error **5.21%** và `passed=false`.
+Phase 6 reward gap closed **99.93%**, nhưng finite-difference diagnostic trên noisy image-reward env hiện tại có relative error **5.21%** và **không pass formal gradcheck**.
 
-**Khuyến nghị:** claim “gradients flow and support optimization demo”, không claim formal gradient exactness.
+**Khuyến nghị:** claim “gradients flow and support optimization demo” cho one-step image-reward env; không mở rộng thành chứng minh gradient exactness hoặc formal gradcheck cho multi-step contact dynamics.
 
 ---
 

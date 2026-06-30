@@ -83,6 +83,7 @@ def main():
     ap.add_argument("--contrast", type=float, default=0.58)
     ap.add_argument("--gif-interp", type=int, default=4)
     ap.add_argument("--gif-ms", type=int, default=120)
+    ap.add_argument("--out-dir", default="phase7", help="subdirectory under runs/")
     args = ap.parse_args()
 
     z = np.load(args.data, allow_pickle=True)
@@ -212,7 +213,7 @@ def main():
                               "mean_dir_deg": float(np.mean(all_dir)),
                               "mean_cos": float(np.mean(all_cos))}}
 
-    phase_dir = RUNS / "phase6"; ensure(phase_dir)
+    phase_dir = RUNS / args.out_dir; ensure(phase_dir)
     try:
         import matplotlib
         matplotlib.use("Agg")

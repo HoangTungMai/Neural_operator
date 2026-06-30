@@ -176,7 +176,8 @@ def verify_paper() -> None:
         "old FNO/MLP advantage": r"10\.6\s*\\times",
         "old baseline advantage low": r"4\.46",
         "old baseline advantage high": r"12\.69",
-        "old control speedup": r"24\.2\s*\\times",
+        "old control speedup 24.2": r"24\.2\s*\\times",
+        "old control speedup 24.5": r"24\.5\s*\\times",
         "old autograd loss": r"2\.77\s*\\times\s*10\^\{-9\}",
         "old ES loss": r"1\.03\s*\\times\s*10\^\{-8\}",
         "old autograd wall": r"13\.67",
@@ -191,7 +192,7 @@ def verify_paper() -> None:
         "new FNO/MLP advantage": r"12\.14\s*\\times",
         "new baseline advantage range": r"5\.54.*12\.63\s*\\times",
         "new target-query advantage": r"84\s*\\times",
-        "new control wall speedup": r"24\.5\s*\\times",
+        "new control wall speedup": r"24\.1\s*\\times",
         "new autograd loss": r"5\.70\s*\\times\s*10\^\{-10\}",
         "new ES loss": r"6\.21\s*\\times\s*10\^\{-10\}",
     }

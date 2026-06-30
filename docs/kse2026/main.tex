@@ -49,7 +49,7 @@ $5.54$--$12.63\times$ on the same IPC ground truth.
 (ii)~\emph{Differentiability buys
 sample-efficient control}: learning a goal-conditioned policy by backpropagation
 through the frozen operator reaches the target with $84\times$ fewer model queries,
-runs $24.5\times$ faster, and reaches lower final loss than a gradient-free
+runs $24.1\times$ faster, and reaches lower final loss than a gradient-free
 baseline. (iii)~\emph{The sensor pipeline is autograd-connected}: a torch
 marker-dot renderer composes with the operator so that applied shear can be
 optimized from the rendered tactile image alone. We close with an honest account of scope: averaged
@@ -102,7 +102,7 @@ $5.54$--$12.63\times$, all measured on the \emph{same} IPC ground truth
 \item \textbf{Differentiable control through a frozen operator.}
 Backpropagating a goal-conditioned policy through the frozen surrogate reaches a
 tactile target with $84\times$ fewer target-reaching model queries and
-$24.5\times$ less wall-clock than evolution strategies, while also reaching lower final loss
+$24.1\times$ less wall-clock than evolution strategies, while also reaching lower final loss
 (Sec.~\ref{sec:exp-control}). We find the often-reported pathology of
 differentiable simulators~\cite{suh2022diffsim} does \emph{not} bite here, and
 explain why.
@@ -178,6 +178,7 @@ use these labels both as a multitask target and for per-regime error reporting.
 
 \begin{figure*}[t]
 \centering
+\resizebox{0.96\textwidth}{!}{%
 \begin{tikzpicture}[
   node distance=7mm and 12mm,
   box/.style={draw, rounded corners, align=center, minimum height=10mm,
@@ -194,7 +195,7 @@ use these labels both as a multitask target and for per-regime error reporting.
   \node[ours, right=of disp] (rend) {marker-dot\\renderer};
   \node[box, right=of rend] (img) {tactile\\image};
 
-  \node[box, below=14mm of fno, fill=green!8] (pol) {policy $\pi_\phi$\\(action $s_x,s_y$)};
+  \node[box, below=14mm of ctx, fill=green!8] (pol) {policy $\pi_\phi$\\(action $s_x,s_y$)};
   \node[box, below=14mm of img, fill=orange!10] (rew) {reward\\$-\lVert I-I^\star\rVert^2$};
 
   \draw[flow] (fem) -- node[above,font=\scriptsize]{train} (ctx);
@@ -202,16 +203,15 @@ use these labels both as a multitask target and for per-regime error reporting.
   \draw[flow] (fno) -- (disp);
   \draw[flow] (disp) -- (rend);
   \draw[flow] (rend) -- (img);
-  \draw[flow] (pol.north) |- (ctx.south);
+  \draw[flow] (pol.north) -- node[right,font=\scriptsize]{action} (ctx.south);
   \draw[flow] (img) -- (rew);
-  \draw[grad] (rew) -| node[below,font=\scriptsize,pos=0.25]{$\nabla_\phi$ via autograd} (pol);
+  \draw[grad] (rew.west) -- node[below,font=\scriptsize]{$\nabla_\phi$ via autograd} (pol.east);
 \end{tikzpicture}
-\caption{The differentiable tactile pipeline. The FNO surrogate $\mathcal{G}_\theta$
-is trained once against FEM ground truth, then frozen. A marker-dot renderer turns
-its output field into a tactile image, so the full forward path
-$\mathrm{render}\!\circ\!\mathcal{G}_\theta$ is differentiable. A goal-conditioned
-policy is trained by backpropagating an image- or field-space reward through the
-frozen surrogate (red, dashed).}
+}
+\caption{The differentiable tactile pipeline. The FNO surrogate is trained once
+against FEM ground truth, then frozen. A marker-dot renderer turns its output
+field into a tactile image. The policy is trained by backpropagating an image- or
+field-space reward through the frozen surrogate (red, dashed).}
 \label{fig:pipeline}
 \end{figure*}
 
@@ -281,7 +281,7 @@ operator, because the stick$\to$partial$\to$full-slip transition is
 
 Against modern dense/operator architectures, DeepONet is closest at $0.046$
 ($1.12\times$ behind FNO), followed by U-Net~\cite{ronneberger2015unet} at
-$0.058$ and the Galerkin Transformer at $0.091$. The defensible message is
+$0.067$ and the Galerkin Transformer at $0.091$. The defensible message is
 \emph{``dense, non-local operator learning beats physics-based and linear tactile
 models, and the spectral FNO is strongest in this bakeoff.''}
 Per regime, the operator remains accurate from normal ($0.033$) through full slip
@@ -308,7 +308,7 @@ MLP per-point (local) & 0.501 & 83.9 & 134k & 12.14 \\
 \multicolumn{5}{@{}l}{\textit{Modern dense / operator nets}}\\
 DeepONet & 0.046 & 1.9 & 1.05M & 1.12 \\
 Galerkin Transformer & 0.091 & 2.4 & 0.30M & 2.19 \\
-U-Net & 0.058 & 2.7 & 0.47M & 1.42 \\
+U-Net & 0.067 & 3.5 & 0.47M & 1.63 \\
 \textbf{FNO (ours)} & \textbf{0.041} & \textbf{1.6} & 2.67M & --- \\
 \bottomrule
 \end{tabular}
@@ -322,9 +322,9 @@ We do not claim shape extrapolation here: all production frames use spherical
 indenters, and non-spherical objects remain future work.
 
 \subsection{RQ3: Speed}\label{sec:exp-speed}
-The operator runs at $\sim$$7839$ frames/s ($\sim$$0.13$\,ms latency) versus
+The operator runs at $\sim$$7803$ frames/s ($\sim$$0.13$\,ms latency) versus
 $0.094$\,frames/s for a fair single IPC/GIPC solve---a
-$\sim$$83{,}200\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). The production
+$\sim$$82{,}827\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). The production
 target averages $K{=}3$ repeated solves, whose effective rate is
 $0.031$\,frames/s; the speedup figure reports the single-solve rate for fairness.
 We are careful here (Sec.~\ref{sec:limits}):
@@ -335,8 +335,10 @@ cheap differentiability, light hardware, and mesh-freedom---not raw fps.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.92\columnwidth]{figs/fidelity_speed.png}
-\caption{Fidelity versus speed. The operator occupies a favourable corner: near
-FEM-level field accuracy at four orders of magnitude lower latency.}
+\caption{Fidelity versus speed. FNO and its multitask variant keep low field
+error while moving from second-scale IPC/GIPC solves to sub-millisecond operator
+inference. The dashed line is a fair single-solve reference; the dotted line is
+the averaged $K{=}3$ production target.}
 \label{fig:fidspeed}
 \end{figure}
 
@@ -347,7 +349,7 @@ operator and black-box ES are evaluated on the same IPC dataset. Autograd reache
 a final loss of $5.70\times10^{-10}$ against ES's $6.21\times10^{-10}$, while using
 $\mathbf{300}$ forward evaluations against ES's $\mathbf{19{,}200}$ ($64\times$
 smaller evaluation budget) and finishing in $\mathbf{13.21}$\,s versus
-$\mathbf{323.95}$\,s ($24.5\times$ faster). It first reaches the target after
+$\mathbf{317.75}$\,s ($24.1\times$ faster). It first reaches the target after
 $21$ queries versus $1771$ for ES ($84\times$ fewer). Both sit above a
 per-instance oracle ($3.04\times10^{-11}$), the expected price of a single
 amortized network serving
@@ -371,7 +373,7 @@ gradient-free ES (mean over 3 seeds). Lower loss and far fewer queries.}
  & final loss & fwd queries & wall (s) \\
 \midrule
 autograd (ours) & $5.70\times10^{-10}$ & \textbf{300} & \textbf{13.21} \\
-ES (pop 32) & $6.21\times10^{-10}$ & 19{,}200 & 323.95 \\
+ES (pop 32) & $6.21\times10^{-10}$ & 19{,}200 & 317.75 \\
 \midrule
 per-instance oracle & $3.04\times10^{-11}$ & --- & --- \\
 \bottomrule
@@ -400,16 +402,18 @@ hardest in normal frames because shear magnitude is near zero.
 Finally, wrapping the frozen operator, the sensor, camera noise, and a reward into a
 single differentiable environment, the Sec.~\ref{sec:exp-control} policy closes
 $99.9\%$ of the random-to-oracle reward gap. Autograd gradients flow to the
-action through the full image pipeline; the current finite-difference diagnostic
-has $5.2\%$ relative error under noisy image rewards, so we treat it as a gradient
-sanity check rather than a formal proof of numerical equality.
+action through the full image pipeline. A finite-difference diagnostic on the
+current noisy image-reward environment has $5.21\%$ relative error and is therefore
+used only as a gradient-flow sanity check, not as formal gradient verification or
+evidence for multi-step contact dynamics.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.95\columnwidth]{figs/sensor_gt_vs_fno.png}
-\caption{Rendered marker-dot tactile images: IPC/GIPC FEM ground truth (top) vs.\
-operator prediction (bottom) across contact modes. The differentiable renderer
-turns the predicted field into a sensor image without re-solving contact.}
+\caption{Rendered marker-dot tactile images across contact modes. Columns show
+IPC/GIPC ground truth, FNO prediction, image residual, and residual marker flow.
+The differentiable renderer turns the predicted field into a sensor image without
+re-solving contact.}
 \label{fig:sensor}
 \end{figure}
 

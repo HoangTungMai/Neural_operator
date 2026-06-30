@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--epochs", type=int, default=120)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--out-dir", default="phase7",
+                    help="subdirectory under runs/ for loading_history.json")
     args = ap.parse_args()
 
     D = load(args.data)
@@ -130,7 +132,7 @@ def main():
                "loading history ~NULL -> path-dependence weak in this FEM; ceiling is elsewhere")
     print(f"\nVERDICT: baseline {b:.3f} -> +loadmode {h:.3f}  ({gain:+.1f}%)  => {verdict}")
 
-    out_dir = RUNS / "phase6"; ensure(out_dir)
+    out_dir = RUNS / args.out_dir; ensure(out_dir)
     json.dump({"data": args.data, "n_test": nt, "epochs": args.epochs,
                "load_mode_dist": {LOAD_MODES[i]: int((lm == i).sum()) for i in range(3)},
                "models": res, "model_free": mf, "gain_pct": gain, "verdict": verdict},
