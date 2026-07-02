@@ -38,7 +38,8 @@ def load(npz):
     inp, scal = params_to_fieldinput(params, coords, side)
     out = disp.reshape(-1, side, side, 3).transpose(0, 3, 1, 2).astype(np.float32)
     meta = {}
-    for key in ("solve_time_s", "n_replicates", "rep_noise_overall", "rep_noise_normal",
+    for key in ("solve_time_s", "n_replicates", "raw_n_replicates",
+                "rep_noise_overall", "rep_noise_normal",
                 "rep_noise_tangential", "gel_res", "eps_velocity", "velocity_tol",
                 "d_hat", "contact_resistance", "n_tet_verts", "marker_sampling"):
         if key in d.files:
@@ -57,7 +58,8 @@ def solver_fps_from_data(D):
         fallback = 1.0 / 3.0
         return fallback, fallback, "fallback_no_solve_time"
     solve = np.asarray(solve, dtype=np.float64).reshape(-1)
-    reps = D["provenance"].get("n_replicates")
+    reps_key = "raw_n_replicates" if "raw_n_replicates" in D["provenance"] else "n_replicates"
+    reps = D["provenance"].get(reps_key)
     if reps is None:
         mean_s = float(solve.mean())
         fps = 1.0 / max(mean_s, 1e-12)
@@ -72,8 +74,21 @@ def solver_fps_from_data(D):
     return (
         1.0 / max(single_mean_s, 1e-12),
         1.0 / max(production_mean_s, 1e-12),
-        "npz_solve_time_s/n_replicates",
+        f"npz_solve_time_s/{reps_key}",
     )
+
+
+def raw_replicate_summary(D):
+    reps = D["provenance"].get("raw_n_replicates", D["provenance"].get("n_replicates"))
+    if reps is None:
+        return None
+    reps = np.asarray(reps, dtype=np.int64).reshape(-1)
+    vals, counts = np.unique(reps, return_counts=True)
+    return {
+        "mean": float(reps.mean()),
+        "mode": int(vals[np.argmax(counts)]),
+        "counts": {str(int(v)): int(c) for v, c in zip(vals, counts)},
+    }
 
 
 def param_box(params):
@@ -209,19 +224,25 @@ def main():
         "fno": throughput(fno, nin(inp[te_idx]), nsc(scal[te_idx]), cg),
         "fno_mt_a": throughput(fno_mt, nin(inp[te_idx]), nsc(scal[te_idx]), cg, multitask=True),
         "gt_solver": solver_fps,
+        "gt_solver_averaged": production_fps,
         "gt_solver_k3_averaged": production_fps,
         # Compatibility alias for older report code; semantically this is now the
         # solver recorded in the selected --data npz, not a separate PhysX scan.
         "physx_fem_shear_solver": solver_fps,
     }
+    raw_k = raw_replicate_summary(D)
     summary["RQ3"]["throughput_fps"] = speeds
     summary["RQ3"]["fno_speedup_vs_gt_solver"] = round(speeds["fno"] / solver_fps, 1)
     summary["RQ3"]["fno_speedup_vs_fem"] = summary["RQ3"]["fno_speedup_vs_gt_solver"]
     summary["RQ3"]["solver_timing_source"] = solver_source
+    if raw_k is not None:
+        summary["RQ3"]["raw_replicates"] = raw_k
     summary["RQ3"]["note"] = (
         f"gt_solver={solver_fps:.3f} fps is the fair single-solve rate from "
-        f"{solver_source}; gt_solver_k3_averaged={production_fps:.3f} fps includes "
-        f"all K=3 calls used to form each production target in {os.path.basename(args.data)}."
+        f"{solver_source}; gt_solver_averaged={production_fps:.3f} fps includes "
+        f"all raw replicate calls used to form each production target"
+        f"{' (raw K mode=' + str(raw_k['mode']) + ', mean=' + format(raw_k['mean'], '.2f') + ')' if raw_k else ''} "
+        f"in {os.path.basename(args.data)}. gt_solver_k3_averaged is kept as a compatibility alias."
     )
 
     # ===== print =====
