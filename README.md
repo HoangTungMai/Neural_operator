@@ -15,6 +15,29 @@ the IPC/UIPC `.npz` directly and reports the paper metrics (for example FNO
 proof-of-concept of the same field-to-field framing. It should not be used to
 reproduce the paper headline table.
 
+## Canonical Corrected-BC Results
+
+Use this table as the source of truth for the current KSE submission. Older
+reports in `docs/` may describe superseded soft-BC or pre-reground runs.
+
+| Item | Canonical artifact |
+|---|---|
+| Ground truth | `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz` |
+| Acceptance checker | `infra/verify_bc_reground.py` |
+| Full downstream rerun | `infra/run_bc_downstream.sh` |
+| RQ1/RQ2/RQ3 | `runs/phase3_fem/benchmark.json` |
+| Baseline bakeoff | `runs/phase3_fem/vbts_baselines.json` |
+| Control | `runs/phase4/policy_servo.json` |
+| Sensor build / inverse | `runs/phase5/sensor_build.json`, `runs/phase5/sensor_inverse_multiframe.json` |
+| Environment demo | `runs/phase6/env_demo.json` |
+| Paper | `docs/kse2026/main.tex`, `docs/kse2026/main.pdf` |
+
+Current headline numbers are FNO `rel-L2=0.074`, per-point MLP `rel-L2=0.545`
+(`7.35x` ratio), single-solve IPC/UIPC speedup `41,253x`, and adaptive raw
+`K=5` corrected-BC targets. Superseded soft-BC numbers such as `rel-L2=0.041`,
+`12.14x`, `82,827x`, or `K=3` are retained only as provenance for the older
+lineage.
+
 ## Layout
 
 ```

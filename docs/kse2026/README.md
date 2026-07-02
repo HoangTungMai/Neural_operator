@@ -37,14 +37,17 @@ Máy hiện tại có TeX Live; bản cuối phải chạy đủ chuỗi trên v
 `main.log` không còn undefined citation/reference.
 
 ## Việc cần làm trước khi nộp
-1. **Tác giả + cơ quan** — điền `\author{...}` (đang là placeholder).
-2. **Acknowledgment** — điền nguồn tài trợ/lab.
+1. **Blind mode** — bản hiện tại đang để `Anonymous Authors` theo vòng QA double-blind.
+   Nếu KSE xác nhận single-blind, restore tác giả + cơ quan trước khi upload.
+2. **Acknowledgment** — điền nguồn tài trợ/lab sau de-anonymisation, hoặc xoá TODO nếu
+   nộp bản anonymous.
 3. **Kiểm tra page-count** — 4 hình + 2 bảng khá nhiều cho 6 trang. Nếu tràn:
    bỏ Fig 2 (fidelity_speed) chuyển thành câu trong text, hoặc thu nhỏ Fig 5.
 4. **Verify 3 trích dẫn** đánh dấu `% VERIFY` trong `references.bib`
    (FOTS, DiffTactile, Taccel — venue/năm/tác giả).
-5. **Anonymize?** KSE thường review **không** ẩn danh (single-blind) → giữ tên tác
-   giả. Kiểm tra lại yêu cầu của special session phòng khi double-blind.
+5. **Anonymize?** KSE thường review **không** ẩn danh (single-blind), nhưng vòng
+   QA hiện đang giữ bản anonymous để an toàn. Kiểm tra lại yêu cầu của special
+   session trước khi nộp.
 
 ## Map số liệu → nguồn (để tự kiểm)
 | Số trong paper | File |

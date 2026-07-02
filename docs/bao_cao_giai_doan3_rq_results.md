@@ -1,3 +1,10 @@
+# SUPERSEDED REPORT
+
+This report belongs to the pre-corrected-BC `REALISTIC.npz` lineage. It is kept
+only as provenance. The current KSE submission source of truth is
+`data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz`,
+`infra/verify_bc_reground.py`, and `docs/kse2026/main.tex`.
+
 # Báo cáo Giai đoạn 3 — RQ1-RQ3 sau realistic reground
 
 **Ngày cập nhật:** 2026-06-30  

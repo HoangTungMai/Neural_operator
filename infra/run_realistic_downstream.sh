@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Rerun every downstream experiment on the realistic UIPC dataset.
-# Run only after gen_uipc_sweep.sh has produced the final 2520-frame NPZ.
+# LEGACY: rerun downstream experiments on the pre-corrected-BC realistic UIPC
+# dataset (`..._REALISTIC.npz`, soft bottom BC, K=3 assertions).
+#
+# Do not use this for the current KSE submission. Use
+# `infra/run_bc_downstream.sh` with
+# `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz` instead.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

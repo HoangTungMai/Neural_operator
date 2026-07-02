@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Verify the realistic-geometry campaign and all downstream deliverables."""
+"""Legacy verifier for the pre-corrected-BC realistic campaign.
+
+This checks the superseded soft-BC `shear_res24_avg_swept_REALISTIC.npz`
+lineage. It is intentionally retained for provenance only. The current KSE
+submission acceptance gate is `infra/verify_bc_reground.py`.
+"""
 from __future__ import annotations
 
 import json

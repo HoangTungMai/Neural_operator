@@ -1,3 +1,10 @@
+# SUPERSEDED INTERNAL REVIEW
+
+This review was written before the corrected-BC production reground. It is kept
+only as provenance for the older `REALISTIC.npz` lineage. The current submission
+QA report is `codex/REPORT_submission_qa.md`, and the current acceptance checker
+is `infra/verify_bc_reground.py`.
+
 # Báo cáo phản biện — KSE 2026, sau realistic reground
 
 **Paper:** *A Differentiable Neural-Operator Surrogate for Vision-Based Tactile Sensing and Control*  
