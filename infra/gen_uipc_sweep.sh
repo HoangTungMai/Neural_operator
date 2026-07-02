@@ -23,7 +23,17 @@ cd "$(dirname "$0")/.."
 
 NCOMBOS="${1:-50}"
 FRAMES="${2:-40}"
-KREPS="${3:-3}"
+ADAPTIVE_TOL="${ADAPTIVE_TOL:-}"
+ADAPTIVE_FLOOR="${ADAPTIVE_FLOOR:-3}"
+ROBUST_KEEP="${ROBUST_KEEP:-}"
+ROBUST_CHANNEL="${ROBUST_CHANNEL:-tangential}"
+if [ $# -ge 3 ]; then
+  KREPS="$3"
+elif [ -n "$ADAPTIVE_TOL" ]; then
+  KREPS=5
+else
+  KREPS=3
+fi
 START_COMBO="${4:-0}"
 END_COMBO="${5:-$((NCOMBOS - 1))}"
 IMG="${IMG:-isaac-lab-tacex:latest}"
@@ -42,10 +52,16 @@ CONTACT_RESISTANCE="${CONTACT_RESISTANCE:-1.0e9}"
 VELOCITY_TOL="${VELOCITY_TOL:-0.001}"
 GEL_XY="${GEL_XY:-0.020}"
 GEL_Z="${GEL_Z:-0.003}"
+GEL_BOTTOM_BC="${GEL_BOTTOM_BC:-soft}"
+GEL_CONSTRAINT_STRENGTH="${GEL_CONSTRAINT_STRENGTH:-100}"
+INDENTOR_CONSTRAINT_STRENGTH="${INDENTOR_CONSTRAINT_STRENGTH:-100}"
+TEST_SIZE="${TEST_SIZE:-400}"
 
 COMMON="--batch --gel-res $GEL_RES --eps-velocity $EPS_VELOCITY --d-hat $D_HAT \
         --contact-resistance $CONTACT_RESISTANCE --gel-xy $GEL_XY --gel-z $GEL_Z \
         --velocity-tol $VELOCITY_TOL \
+        --gel-bottom-bc $GEL_BOTTOM_BC --gel-constraint-strength $GEL_CONSTRAINT_STRENGTH \
+        --indentor-constraint-strength $INDENTOR_CONSTRAINT_STRENGTH \
         --marker-side 32 --press-steps 40 --settle-steps 10 --shear-steps 80 \
         --shear-settle 10 --batch-reps $KREPS --progress-file $PROG"
 
@@ -93,7 +109,19 @@ for ci in range(n):
     print(ci, f"{R:.8g}", f"{mu:.8g}", f"{E:.8g}", 42 + ci)
 PYEOF
 
-echo "UIPC BATCH SWEEP: combos ${START_COMBO}..${END_COMBO} | frames=$FRAMES K=$KREPS | log $PROG"
+AGG_EXTRA=()
+if [ -n "$ADAPTIVE_TOL" ] && [ -n "$ROBUST_KEEP" ]; then
+  echo "ADAPTIVE_TOL and ROBUST_KEEP are mutually exclusive" >&2
+  exit 2
+fi
+if [ -n "$ADAPTIVE_TOL" ]; then
+  AGG_EXTRA+=(--adaptive-tol "$ADAPTIVE_TOL" --adaptive-floor "$ADAPTIVE_FLOOR")
+elif [ -n "$ROBUST_KEEP" ]; then
+  AGG_EXTRA+=(--robust-keep "$ROBUST_KEEP")
+fi
+AGG_EXTRA+=(--robust-channel "$ROBUST_CHANNEL")
+
+echo "UIPC BATCH SWEEP: combos ${START_COMBO}..${END_COMBO} | frames=$FRAMES K=$KREPS | gel_bc=$GEL_BOTTOM_BC gel_strength=$GEL_CONSTRAINT_STRENGTH indentor_strength=$INDENTOR_CONSTRAINT_STRENGTH | adaptive_tol=${ADAPTIVE_TOL:-none} adaptive_floor=$ADAPTIVE_FLOOR robust_keep=${ROBUST_KEEP:-none} | log $PROG"
 ok=0; failc=0
 
 while read -r CI R MU E SEED; do
@@ -126,7 +154,8 @@ while read -r CI R MU E SEED; do
     nrep="$($PY -c "import glob;print(len(glob.glob('$fdir/rep_*/uipc_gt_shear.npz')))" 2>/dev/null)"
     if [ "$nrep" = "$KREPS" ]; then
       [ -f "$avg" ] || $PY -m novbts.groundtruth.aggregate_uipc_replicates \
-        --glob "$fdir/rep_*/uipc_gt_shear.npz" --out "$avg" --mode-shear-scale 0.001 >/dev/null 2>&1
+        --glob "$fdir/rep_*/uipc_gt_shear.npz" --out "$avg" --mode-shear-scale 0.001 \
+        "${AGG_EXTRA[@]}" >/dev/null 2>&1
       [ -f "$avg" ] && fdone=$((fdone+1))
     fi
   done
@@ -141,5 +170,6 @@ $PY -m novbts.groundtruth.aggregate_uipc_replicates \
   --out "$OUT_DATA" \
   --mode-shear-scale 0.001 \
   --expect-reps "$KREPS" \
-  --test-size 400 \
-  --shuffle-seed 2026
+  --test-size "$TEST_SIZE" \
+  --shuffle-seed 2026 \
+  "${AGG_EXTRA[@]}"

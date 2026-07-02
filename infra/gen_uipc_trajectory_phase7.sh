@@ -12,6 +12,27 @@ IMG="${IMG:-isaac-lab-tacex:latest}"
 PY="${PY:-.venv-gate2/bin/python}"
 SCRIPT="/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py"
 OUT_ROOT="${OUT_ROOT:-data/uipc/trajectory_phase7}"
+DATA_TAG="${DATA_TAG:-REALISTIC}"
+RUN_OUT_DIR="${RUN_OUT_DIR:-phase7}"
+GEL_XY="${GEL_XY:-0.020}"
+GEL_Z="${GEL_Z:-0.003}"
+GEL_RES="${GEL_RES:-24}"
+INDENTOR_R="${INDENTOR_R:-0.004}"
+MU="${MU:-0.6}"
+YOUNGS="${YOUNGS:-1.0e5}"
+SHEAR_SCALE="${SHEAR_SCALE:-0.001}"
+EPS_VELOCITY="${EPS_VELOCITY:-2.5e-5}"
+VELOCITY_TOL="${VELOCITY_TOL:-1e-3}"
+D_HAT="${D_HAT:-1e-4}"
+CONTACT_RESISTANCE="${CONTACT_RESISTANCE:-1e9}"
+GEL_BOTTOM_BC="${GEL_BOTTOM_BC:-soft}"
+GEL_CONSTRAINT_STRENGTH="${GEL_CONSTRAINT_STRENGTH:-100}"
+INDENTOR_CONSTRAINT_STRENGTH="${INDENTOR_CONSTRAINT_STRENGTH:-100}"
+PRESS_STEPS="${PRESS_STEPS:-40}"
+SETTLE_STEPS="${SETTLE_STEPS:-10}"
+SHEAR_STEPS="${SHEAR_STEPS:-80}"
+SHEAR_SETTLE="${SHEAR_SETTLE:-10}"
+TRAJ_STEPS="${TRAJ_STEPS:-8}"
 N_ENDPOINTS="${1:-12}"
 KREPS="${2:-3}"
 TEST_SIZE="${3:-9}"
@@ -19,12 +40,13 @@ TEST_SIZE="${3:-9}"
 ROWS_DIR="$OUT_ROOT/_rows"
 ROWS="$ROWS_DIR/combo_000.rows"
 SWEEP_DIR="$OUT_ROOT/sweep"
-FINAL_NPZ="$OUT_ROOT/shear_res24_traj_REALISTIC.npz"
+FINAL_NPZ="$OUT_ROOT/shear_res24_traj_${DATA_TAG}.npz"
 PROGRESS="$OUT_ROOT/progress_combo_000.log"
 
 mkdir -p "$ROWS_DIR" "$SWEEP_DIR"
 
 "$PY" - "$ROWS" "$N_ENDPOINTS" <<'PY'
+import os
 import math
 import sys
 from pathlib import Path
@@ -35,8 +57,14 @@ load_modes = ("linear", "ortho", "reverse")
 
 # Endpoint set spans stick/partial/full while keeping identical endpoints across
 # load modes. Units and param conventions mirror the realistic static sweep.
-depths = [0.00020, 0.00035, 0.00050, 0.00065]
-drive = [0.20, 0.55, 0.90]
+# Defaults are intentionally stronger than the first pilot so the temporal GIF
+# contains full-slip frames with visible marker flow.
+depths = [float(x) for x in os.environ.get(
+    "DEPTH_LEVELS", "0.00035,0.00055,0.00075"
+).split(",")]
+drive = [float(x) for x in os.environ.get(
+    "DRIVE_LEVELS", "0.30,0.80,1.30"
+).split(",")]
 rows.parent.mkdir(parents=True, exist_ok=True)
 with rows.open("w") as f:
     frame = 0
@@ -44,8 +72,9 @@ with rows.open("w") as f:
         depth = depths[i % len(depths)]
         g = drive[i % len(drive)]
         theta = 2.0 * math.pi * (i / max(n, 1))
-        mu = 0.6
-        shear_mag = g * mu * 0.001
+        mu = float(os.environ.get("MU", "0.6"))
+        shear_scale = float(os.environ.get("SHEAR_SCALE", "0.001"))
+        shear_mag = g * mu * shear_scale
         sx = shear_mag * math.cos(theta)
         sy = shear_mag * math.sin(theta)
         for lm in load_modes:
@@ -62,14 +91,17 @@ docker run --rm --gpus all \
   --batch-rows "/work/$ROWS" \
   --batch-reps "$KREPS" \
   --out "/work/$SWEEP_DIR/combo_000" \
-  --gel-xy 0.020 --gel-z 0.003 --gel-res 24 \
-  --indentor-r 0.004 --mu 0.6 --youngs 1.0e5 \
+  --gel-xy "$GEL_XY" --gel-z "$GEL_Z" --gel-res "$GEL_RES" \
+  --indentor-r "$INDENTOR_R" --mu "$MU" --youngs "$YOUNGS" \
   --depth 0.00035 --shear 0.0004 \
-  --eps-velocity 2.5e-5 --velocity-tol 1e-3 \
-  --d-hat 1e-4 --contact-resistance 1e9 \
-  --press-steps 40 --settle-steps 10 --shear-steps 80 --shear-settle 10 \
+  --eps-velocity "$EPS_VELOCITY" --velocity-tol "$VELOCITY_TOL" \
+  --d-hat "$D_HAT" --contact-resistance "$CONTACT_RESISTANCE" \
+  --press-steps "$PRESS_STEPS" --settle-steps "$SETTLE_STEPS" --shear-steps "$SHEAR_STEPS" --shear-settle "$SHEAR_SETTLE" \
   --marker-side 32 \
-  --save-trajectory --traj-steps 8 \
+  --gel-bottom-bc "$GEL_BOTTOM_BC" \
+  --gel-constraint-strength "$GEL_CONSTRAINT_STRENGTH" \
+  --indentor-constraint-strength "$INDENTOR_CONSTRAINT_STRENGTH" \
+  --save-trajectory --traj-steps "$TRAJ_STEPS" \
   --progress-file "/work/$PROGRESS"
 
 docker run --rm -v "$PWD":/work --entrypoint bash "$IMG" \
@@ -80,7 +112,7 @@ docker run --rm -v "$PWD":/work --entrypoint bash "$IMG" \
   --out "$FINAL_NPZ" \
   --expect-reps "$KREPS" \
   --test-size "$TEST_SIZE" \
-  --mode-shear-scale 0.001
+  --mode-shear-scale "$SHEAR_SCALE"
 
 "$PY" -m novbts.operator.loading_history \
   --data "$FINAL_NPZ" \
@@ -91,13 +123,13 @@ docker run --rm -v "$PWD":/work --entrypoint bash "$IMG" \
 
 "$PY" -m novbts.sensor.temporal \
   --data "$FINAL_NPZ" \
-  --out-dir phase7
+  --out-dir "$RUN_OUT_DIR"
 
 "$PY" -m novbts.sensor.temporal_compare \
   --data "$FINAL_NPZ" \
   --fno-data data/uipc/shear_res24_avg_swept_REALISTIC.npz \
   --fno-epochs 80 \
   --modes 12 \
-  --out-dir phase7
+  --out-dir "$RUN_OUT_DIR"
 
 echo "PHASE7_TRAJECTORY_DONE $FINAL_NPZ"

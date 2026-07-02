@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import itertools
 import os
 from pathlib import Path
 
@@ -65,6 +66,81 @@ def replicate_noise(fields: np.ndarray) -> dict[str, float]:
     }
 
 
+def _channel_view(field: np.ndarray, channel: str) -> np.ndarray:
+    if channel == "overall":
+        return field
+    if channel == "normal":
+        return field[:, 2]
+    if channel == "tangential":
+        return field[:, :2]
+    raise ValueError(f"unknown robust channel: {channel}")
+
+
+def pairwise_rel_l2(fields: np.ndarray, channel: str) -> np.ndarray:
+    n = fields.shape[0]
+    dist = np.zeros((n, n), dtype=np.float64)
+    views = [_channel_view(fields[i], channel) for i in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = rel_l2(views[i], views[j])
+            dist[i, j] = d
+            dist[j, i] = d
+    return dist
+
+
+def select_robust_replicates(fields: np.ndarray, keep: int, channel: str) -> tuple[np.ndarray, np.ndarray]:
+    """Select the subset of replicate indices with minimal mean pairwise distance."""
+    n = fields.shape[0]
+    if keep <= 0 or keep > n:
+        raise SystemExit(f"--robust-keep must be in [1, {n}], got {keep}")
+    if keep == n:
+        return np.arange(n, dtype=np.int32), pairwise_rel_l2(fields, channel)
+    dist = pairwise_rel_l2(fields, channel)
+    best_score = None
+    best_subset = None
+    for subset in itertools.combinations(range(n), keep):
+        vals = [dist[i, j] for i, j in itertools.combinations(subset, 2)]
+        score = float(np.mean(vals)) if vals else 0.0
+        if best_score is None or score < best_score:
+            best_score = score
+            best_subset = subset
+    return np.array(best_subset, dtype=np.int32), dist
+
+
+def select_adaptive_replicates(
+    fields: np.ndarray,
+    tol: float,
+    channel: str,
+    *,
+    floor: int = 3,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Select the largest mutually consistent subset, falling back to best-floor."""
+    n = fields.shape[0]
+    if tol < 0:
+        raise SystemExit(f"--adaptive-tol must be non-negative, got {tol}")
+    if n < floor:
+        raise SystemExit(f"--adaptive-tol needs at least {floor} reps, got {n}")
+    dist = pairwise_rel_l2(fields, channel)
+    best_floor_subset = None
+    best_floor_score = None
+    for keep in range(n, floor - 1, -1):
+        best_subset = None
+        best_score = None
+        for subset in itertools.combinations(range(n), keep):
+            vals = [dist[i, j] for i, j in itertools.combinations(subset, 2)]
+            score = float(np.mean(vals)) if vals else 0.0
+            if keep == floor and (best_floor_score is None or score < best_floor_score):
+                best_floor_score = score
+                best_floor_subset = subset
+            if best_score is None or score < best_score:
+                best_score = score
+                best_subset = subset
+        if best_score is not None and best_score <= tol:
+            return np.array(best_subset, dtype=np.int32), dist, best_score
+    assert best_floor_subset is not None and best_floor_score is not None
+    return np.array(best_floor_subset, dtype=np.int32), dist, best_floor_score
+
+
 def _same(a: np.ndarray, b: np.ndarray, name: str, path: str) -> None:
     if a.shape != b.shape:
         raise SystemExit(f"{name} mismatch in {path}")
@@ -76,7 +152,11 @@ def _same(a: np.ndarray, b: np.ndarray, name: str, path: str) -> None:
         raise SystemExit(f"{name} mismatch in {path}")
 
 
-def average_files(paths: list[str], *, mode_shear_scale: float | None = None) -> dict[str, np.ndarray]:
+def average_files(paths: list[str], *, mode_shear_scale: float | None = None,
+                  robust_keep: int | None = None,
+                  adaptive_tol: float | None = None,
+                  adaptive_floor: int = 3,
+                  robust_channel: str = "tangential") -> dict[str, np.ndarray]:
     if not paths:
         raise SystemExit("no replicate files matched")
     loaded = [np.load(p, allow_pickle=True) for p in paths]
@@ -86,12 +166,27 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
         _same(ref["coords"], d["coords"], "coords", p)
         for key in (
             "gel_res", "eps_velocity", "velocity_tol", "d_hat",
-            "contact_resistance", "marker_sampling", "load_mode", "traj_fracs",
+            "contact_resistance", "gel_bottom_bc", "gel_constraint_strength",
+            "indentor_constraint_strength", "marker_sampling", "load_mode", "traj_fracs",
         ):
             if key in ref.files and key in d.files:
                 _same(np.asarray(ref[key]), np.asarray(d[key]), key, p)
 
-    fields = np.stack([np.asarray(d["disp"], dtype=np.float32)[0] for d in loaded], axis=0)
+    fields_all = np.stack([np.asarray(d["disp"], dtype=np.float32)[0] for d in loaded], axis=0)
+    raw_noise = replicate_noise(fields_all)
+    robust_pairwise = None
+    adaptive_score = None
+    if robust_keep is not None and adaptive_tol is not None:
+        raise SystemExit("--adaptive-tol is mutually exclusive with --robust-keep")
+    if adaptive_tol is not None:
+        keep_idx, robust_pairwise, adaptive_score = select_adaptive_replicates(
+            fields_all, adaptive_tol, robust_channel, floor=adaptive_floor
+        )
+    elif robust_keep is not None:
+        keep_idx, robust_pairwise = select_robust_replicates(fields_all, robust_keep, robust_channel)
+    else:
+        keep_idx = np.arange(fields_all.shape[0], dtype=np.int32)
+    fields = fields_all[keep_idx]
     mean_field = fields.mean(axis=0, dtype=np.float64).astype(np.float32)
     noise = replicate_noise(fields)
     traj_mean = None
@@ -100,7 +195,8 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
         for p, d in zip(paths, loaded):
             if "disp_traj" not in d.files:
                 raise SystemExit(f"{p} missing disp_traj while first replicate has it")
-        traj_fields = np.stack([np.asarray(d["disp_traj"], dtype=np.float32)[0] for d in loaded], axis=0)
+        traj_fields_all = np.stack([np.asarray(d["disp_traj"], dtype=np.float32)[0] for d in loaded], axis=0)
+        traj_fields = traj_fields_all[keep_idx]
         traj_mean = traj_fields.mean(axis=0, dtype=np.float64).astype(np.float32)
         # Noise over the whole trajectory tensor, useful for Phase 7 provenance.
         centered = traj_fields - traj_mean[None, ...]
@@ -112,27 +208,48 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
     if mode_shear_scale is not None and (modes < 0).any():
         modes = infer_mode(params, mode_shear_scale)
 
-    solve_rep = np.concatenate([np.asarray(d["solve_time_s"], dtype=np.float32).reshape(-1) for d in loaded])
+    solve_rep_all = np.concatenate([np.asarray(d["solve_time_s"], dtype=np.float32).reshape(-1) for d in loaded])
+    solve_rep = solve_rep_all[keep_idx]
+    kept_paths = [paths[int(i)] for i in keep_idx]
+    rejected_idx = np.array([i for i in range(len(paths)) if i not in set(keep_idx.tolist())], dtype=np.int32)
     out: dict[str, np.ndarray] = {
         "params": params,
         "coords": np.asarray(ref["coords"], dtype=np.float32),
         "disp": mean_field[None, ...].astype(np.float32),
         "mode": modes.astype(np.int32),
         # Production cost for an averaged frame is K solver calls.
-        "solve_time_s": np.array([solve_rep.sum()], dtype=np.float32),
-        "rep_solve_time_s": solve_rep.astype(np.float32),
-        "rep_solve_time_mean_s": np.array([solve_rep.mean()], dtype=np.float32),
-        "rep_solve_time_sum_s": np.array([solve_rep.sum()], dtype=np.float32),
-        "n_replicates": np.array([len(paths)], dtype=np.int32),
-        "source_files": np.array(paths, dtype="U512"),
+        "solve_time_s": np.array([solve_rep_all.sum()], dtype=np.float32),
+        "rep_solve_time_s": solve_rep_all.astype(np.float32),
+        "kept_rep_solve_time_s": solve_rep.astype(np.float32),
+        "rep_solve_time_mean_s": np.array([solve_rep_all.mean()], dtype=np.float32),
+        "rep_solve_time_sum_s": np.array([solve_rep_all.sum()], dtype=np.float32),
+        "n_replicates": np.array([len(kept_paths)], dtype=np.int32),
+        "raw_n_replicates": np.array([len(paths)], dtype=np.int32),
+        "kept_replicate_indices": (keep_idx + 1).astype(np.int32),
+        "rejected_replicate_indices": (rejected_idx + 1).astype(np.int32),
+        "source_files": np.array(kept_paths, dtype="U512"),
+        "raw_source_files": np.array(paths, dtype="U512"),
         "meta": np.array(
             "gt=uipc_ipc_SHEAR; rep_averaged; tacex_uipc; units=m; schema=params/coords/disp/mode",
             dtype="U120",
         ),
     }
+    if robust_keep is not None:
+        out["robust_aggregation"] = np.array([f"best_{robust_keep}_of_{len(paths)}"], dtype="U32")
+        out["robust_channel"] = np.array([robust_channel], dtype="U32")
+        out["robust_pairwise_rel_l2"] = robust_pairwise.astype(np.float32)
+    if adaptive_tol is not None:
+        out["robust_aggregation"] = np.array([f"adaptive_tol_{adaptive_tol:g}"], dtype="U32")
+        out["robust_channel"] = np.array([robust_channel], dtype="U32")
+        out["robust_pairwise_rel_l2"] = robust_pairwise.astype(np.float32)
+        out["adaptive_tol"] = np.array([adaptive_tol], dtype=np.float32)
+        out["adaptive_floor"] = np.array([adaptive_floor], dtype=np.int32)
+        out["adaptive_kept_count"] = np.array([len(keep_idx)], dtype=np.int32)
+        out["adaptive_pairwise_score"] = np.array([adaptive_score], dtype=np.float32)
     for key in (
         "gel_res", "eps_velocity", "velocity_tol", "d_hat",
-        "contact_resistance", "n_tet_verts", "marker_sampling",
+        "contact_resistance", "gel_bottom_bc", "gel_constraint_strength",
+        "indentor_constraint_strength", "n_tet_verts", "marker_sampling",
         "load_mode", "load_mode_names", "traj_fracs",
     ):
         if key in ref.files:
@@ -142,6 +259,8 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None) ->
         out["rep_noise_traj"] = np.array([traj_noise], dtype=np.float32)
     for key, value in noise.items():
         out[key] = np.array([value], dtype=np.float32)
+    for key, value in raw_noise.items():
+        out[key + "_raw"] = np.array([value], dtype=np.float32)
     return out
 
 
@@ -183,6 +302,10 @@ def stratified_train_test_order(modes: np.ndarray, test_size: int, seed: int) ->
 
 def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | None,
                     expect_reps: int | None = None,
+                    robust_keep: int | None = None,
+                    adaptive_tol: float | None = None,
+                    adaptive_floor: int = 3,
+                    robust_channel: str = "tangential",
                     frame_out_name: str = "uipc_gt_shear_avg.npz",
                     test_size: int | None = None,
                     shuffle_seed: int = 2026,
@@ -197,7 +320,10 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
         if expect_reps is not None and len(rep_paths) != expect_reps:
             skipped.append(f"{frame_dir} ({len(rep_paths)}/{expect_reps} reps)")
             continue
-        avg = average_files(rep_paths, mode_shear_scale=mode_shear_scale)
+        avg = average_files(rep_paths, mode_shear_scale=mode_shear_scale,
+                            robust_keep=robust_keep, adaptive_tol=adaptive_tol,
+                            adaptive_floor=adaptive_floor,
+                            robust_channel=robust_channel)
         avg["source_frame_dir"] = np.array([str(frame_dir)], dtype="U512")
         if write_frame_averages:
             frame_out = frame_dir / frame_out_name
@@ -223,9 +349,13 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
         "mode": np.concatenate([r["mode"] for r in rows], axis=0).astype(np.int32),
         "solve_time_s": np.concatenate([r["solve_time_s"] for r in rows], axis=0).astype(np.float32),
         "n_replicates": np.concatenate([r["n_replicates"] for r in rows], axis=0).astype(np.int32),
+        "raw_n_replicates": np.concatenate([r["raw_n_replicates"] for r in rows], axis=0).astype(np.int32),
         "rep_noise_overall": np.concatenate([r["rep_noise_overall"] for r in rows], axis=0).astype(np.float32),
         "rep_noise_normal": np.concatenate([r["rep_noise_normal"] for r in rows], axis=0).astype(np.float32),
         "rep_noise_tangential": np.concatenate([r["rep_noise_tangential"] for r in rows], axis=0).astype(np.float32),
+        "rep_noise_overall_raw": np.concatenate([r["rep_noise_overall_raw"] for r in rows], axis=0).astype(np.float32),
+        "rep_noise_normal_raw": np.concatenate([r["rep_noise_normal_raw"] for r in rows], axis=0).astype(np.float32),
+        "rep_noise_tangential_raw": np.concatenate([r["rep_noise_tangential_raw"] for r in rows], axis=0).astype(np.float32),
         "source_frame_dir": np.concatenate([r["source_frame_dir"] for r in rows], axis=0),
         "meta": np.array("gt=uipc_ipc_SHEAR_sweep; rep_averaged; tacex_uipc; units=m", dtype="U96"),
     }
@@ -235,9 +365,43 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
     if test_size is not None:
         merged["split_test_size"] = np.array([test_size], dtype=np.int32)
         merged["split_shuffle_seed"] = np.array([shuffle_seed], dtype=np.int64)
+    if robust_keep is not None or adaptive_tol is not None:
+        max_keep = max(len(r["kept_replicate_indices"]) for r in rows)
+        max_reject = max(len(r["rejected_replicate_indices"]) for r in rows)
+        max_reps = max(int(r["raw_n_replicates"][0]) for r in rows)
+
+        def padded(key: str, width: int) -> np.ndarray:
+            arr = np.zeros((len(rows), width), dtype=np.int32)
+            for i, row in enumerate(rows):
+                vals = np.asarray(row[key], dtype=np.int32).reshape(-1)
+                arr[i, :len(vals)] = vals
+            return arr
+
+        def padded_pairwise() -> np.ndarray:
+            arr = np.zeros((len(rows), max_reps, max_reps), dtype=np.float32)
+            for i, row in enumerate(rows):
+                vals = np.asarray(row["robust_pairwise_rel_l2"], dtype=np.float32)
+                arr[i, :vals.shape[0], :vals.shape[1]] = vals
+            return arr
+
+        merged["robust_aggregation"] = np.concatenate([r["robust_aggregation"] for r in rows], axis=0)
+        merged["robust_channel"] = np.concatenate([r["robust_channel"] for r in rows], axis=0)
+        merged["kept_replicate_indices"] = padded("kept_replicate_indices", max_keep)
+        merged["rejected_replicate_indices"] = padded("rejected_replicate_indices", max_reject)
+        merged["robust_pairwise_rel_l2"] = padded_pairwise()
+    if adaptive_tol is not None:
+        merged["adaptive_tol"] = np.concatenate([r["adaptive_tol"] for r in rows], axis=0).astype(np.float32)
+        merged["adaptive_floor"] = np.concatenate([r["adaptive_floor"] for r in rows], axis=0).astype(np.int32)
+        merged["adaptive_kept_count"] = np.concatenate(
+            [r["adaptive_kept_count"] for r in rows], axis=0
+        ).astype(np.int32)
+        merged["adaptive_pairwise_score"] = np.concatenate(
+            [r["adaptive_pairwise_score"] for r in rows], axis=0
+        ).astype(np.float32)
     for key in (
         "gel_res", "eps_velocity", "velocity_tol", "d_hat",
-        "contact_resistance", "n_tet_verts", "marker_sampling",
+        "contact_resistance", "gel_bottom_bc", "gel_constraint_strength",
+        "indentor_constraint_strength", "n_tet_verts", "marker_sampling",
         "load_mode", "load_mode_names", "traj_fracs",
     ):
         if key in rows[0]:
@@ -269,20 +433,37 @@ def main() -> None:
                     help="seed for --test-size stratified train/test ordering")
     ap.add_argument("--no-write-frame-averages", action="store_true",
                     help="aggregate in memory without writing into frame directories")
+    ap.add_argument("--robust-keep", type=int, default=None,
+                    help="select the most mutually consistent K reps before averaging, e.g. 4 for best-4-of-5")
+    ap.add_argument("--adaptive-tol", type=float, default=None,
+                    help="select the largest subset with mean pairwise rel-L2 below this tolerance; fallback best floor")
+    ap.add_argument("--adaptive-floor", type=int, default=3,
+                    help="minimum adaptive subset size before fallback; default 3")
+    ap.add_argument("--robust-channel", choices=["tangential", "normal", "overall"], default="tangential",
+                    help="field channel used for robust replicate selection")
     args = ap.parse_args()
 
     if bool(args.glob_pattern) == bool(args.sweep_dir):
         raise SystemExit("pass exactly one of --glob or --sweep-dir")
+    if args.robust_keep is not None and args.adaptive_tol is not None:
+        raise SystemExit("--adaptive-tol is mutually exclusive with --robust-keep")
 
     if args.glob_pattern:
         paths = sorted(glob.glob(args.glob_pattern))
-        data = average_files(paths, mode_shear_scale=args.mode_shear_scale)
+        data = average_files(paths, mode_shear_scale=args.mode_shear_scale,
+                             robust_keep=args.robust_keep,
+                             adaptive_tol=args.adaptive_tol,
+                             adaptive_floor=args.adaptive_floor,
+                             robust_channel=args.robust_channel)
         save_npz(args.out, data)
         print(f"averaged {len(paths)} UIPC reps -> {args.out}")
         print(f"mode={data['mode'].tolist()} rep_noise_tang={float(data['rep_noise_tangential'][0]):.4f}")
     else:
         aggregate_sweep(args.sweep_dir, args.out, mode_shear_scale=args.mode_shear_scale,
-                        expect_reps=args.expect_reps, test_size=args.test_size,
+                        expect_reps=args.expect_reps, robust_keep=args.robust_keep,
+                        adaptive_tol=args.adaptive_tol,
+                        adaptive_floor=args.adaptive_floor,
+                        robust_channel=args.robust_channel, test_size=args.test_size,
                         shuffle_seed=args.shuffle_seed,
                         write_frame_averages=not args.no_write_frame_averages)
 

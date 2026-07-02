@@ -98,6 +98,12 @@ parser.add_argument("--poisson", type=float, default=0.45, help="gel Poisson rat
 parser.add_argument("--gel-density", type=float, default=1.0e3, help="gel mass density (kg/m^3)")
 parser.add_argument("--indentor-youngs", type=float, default=5.0e8,
                     help="indentor Young's modulus (Pa); high => effectively rigid")
+parser.add_argument("--gel-bottom-bc", choices=["soft", "fixed"], default="soft",
+                    help="bottom boundary: soft uses SoftPositionConstraint; fixed sets builtin.is_fixed on bottom vertices")
+parser.add_argument("--gel-constraint-strength", type=float, default=100.0,
+                    help="SoftPositionConstraint strength ratio for constrained gel bottom vertices")
+parser.add_argument("--indentor-constraint-strength", type=float, default=100.0,
+                    help="SoftPositionConstraint strength ratio for the kinematically driven indentor")
 # --- stepping schedule ------------------------------------------------------
 parser.add_argument("--press-steps", type=int, default=40, help="frames to lower the indentor")
 parser.add_argument("--settle-steps", type=int, default=10, help="frames to settle after press")
@@ -483,11 +489,17 @@ def build_scene(uipc_sim, gel_res):
     moduli = ElasticModuli.youngs_poisson(args.youngs, args.poisson)
     snh.apply_to(gel_mesh, moduli, mass_density=args.gel_density)
     default_element.apply_to(gel_mesh)
-    # Dirichlet BC: pin the bottom face (z = 0) by constraining those vertices.
-    spc.apply_to(gel_mesh, 100.0)  # constraint strength ratio
+    # Dirichlet BC: pin the bottom face (z = 0). The historical path used a
+    # SoftPositionConstraint, while the fixed path sets UIPC's hard is_fixed flag.
+    spc.apply_to(gel_mesh, args.gel_constraint_strength)
     gel_pos0 = gel_mesh.positions().view().reshape(-1, 3).copy()
     # structured mesh => bottom verts sit exactly at z=0; a tight tol is safe.
     gel_bottom_mask = gel_pos0[:, 2] <= (gel_pos0[:, 2].min() + 1e-6)
+    if args.gel_bottom_bc == "fixed":
+        is_fixed = gel_mesh.vertices().find(builtin.is_fixed)
+        if not is_fixed:
+            is_fixed = gel_mesh.vertices().create(builtin.is_fixed, 0)
+        view(is_fixed)[gel_bottom_mask] = 1
     gel_object = scene.objects().create("gel")
     gel_slot, _ = gel_object.geometries().create(gel_mesh)
 
@@ -504,7 +516,7 @@ def build_scene(uipc_sim, gel_res):
     ind_moduli = ElasticModuli.youngs_poisson(args.indentor_youngs, 0.45)
     snh.apply_to(ind_mesh, ind_moduli, mass_density=args.gel_density)
     default_element.apply_to(ind_mesh)
-    spc.apply_to(ind_mesh, 100.0)
+    spc.apply_to(ind_mesh, args.indentor_constraint_strength)
     ind_pos0 = ind_mesh.positions().view().reshape(-1, 3).copy()
     ind_object = scene.objects().create("indentor")
     ind_slot, _ = ind_object.geometries().create(ind_mesh)
@@ -732,6 +744,9 @@ def save_field(out_dir, coords, field, scalars, traj=None):
         velocity_tol=np.array([args.velocity_tol], dtype=np.float32),
         d_hat=np.array([args.d_hat], dtype=np.float32),
         contact_resistance=np.array([args.contact_resistance], dtype=np.float32),
+        gel_bottom_bc=np.array([args.gel_bottom_bc], dtype="U16"),
+        gel_constraint_strength=np.array([args.gel_constraint_strength], dtype=np.float32),
+        indentor_constraint_strength=np.array([args.indentor_constraint_strength], dtype=np.float32),
         n_tet_verts=np.array([scalars["n_tet_verts"]], dtype=np.int32),
         marker_sampling=np.array([scalars.get("marker_sampling", "unknown")], dtype="U32"),
         load_mode=np.array([LOAD_MODES.index(scalars.get("load_mode", args.load_mode))], dtype=np.int32),
