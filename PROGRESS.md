@@ -1,5 +1,578 @@
 # PROGRESS: realistic VBTS gel geometry reground
 
+## Latest checkpoint (2026-07-01 Phase7 vtol0003 full smoke + K5 outlier audit +07)
+
+All-regime smoke with corrected boundary conditions completed, but it should NOT
+be treated as full production acceptance yet.
+
+Corrected candidate:
+
+```bash
+GEL_BOTTOM_BC=fixed INDENTOR_CONSTRAINT_STRENGTH=3e4 VELOCITY_TOL=0.0003
+```
+
+Smoke artifact:
+
+- `data/uipc/shear_res24_avg_swept_REALISTIC_BC_SMOKE_VTOL0003_FULL.npz`
+- `N=72`, K=3 averaged frames
+- modes: normal=36, stick=17, partial=11, full=8
+- provenance: `gel_bottom_bc=fixed`, `indentor_constraint_strength=30000`,
+  `velocity_tol=0.0003`, `gel_res=24`, bilinear marker sampling
+
+Rigid-shift/localization result:
+
+- normal uniform energy mean/p95: `4.27% / 6.29%`
+- stick uniform energy mean/p95: `15.71% / 25.01%`
+- partial uniform energy mean/p95: `21.77% / 24.13%`
+- full uniform energy mean/p95: `23.52% / 26.06%`
+- full residual tangential mean: `0.066 mm`
+
+Conclusion on BC:
+
+- The old soft-BC artifact (`~99.8--99.9%` uniform energy) is removed.
+- The corrected BC is physically much better for localized tangential GT.
+
+Repeatability result:
+
+- all-frame tangential replicate noise mean/p95/max: `3.03% / 11.25% / 20.86%`
+- normal mode tangential noise mean/p95/max: `0.64% / 1.36% / 2.13%`
+- stick: `2.99% / 6.81% / 7.10%`
+- partial: `6.00% / 16.32% / 20.86%`
+- full: `9.77% / 11.83% / 11.87%`
+
+Outlier audit:
+
+- worst frame: `combo_002/frame_009`, partial, `R=6 mm`, depth `0.316 mm`,
+  shear `0.533 mm`, tangential noise `20.86%`
+- raw reps show rep 2 and rep 3 are close (`4.50%` tangential pair distance),
+  while rep 1 is far from both (`28.18%` and `29.90%`)
+- other full-slip outliers are more distributed and are not explained by one
+  single bad replicate
+
+Targeted K=5 probe:
+
+- Added reps 4 and 5 for `combo_002` only. The final smoke NPZ was NOT
+  re-aggregated; it remains K=3.
+- For combo 002, straight K=5 improves but does not fully solve high-shear noise:
+  - partial/full mean pair tangential noise: K3 `12.23%` -> K5 `9.60%`
+  - full mean pair tangential noise: K3 `9.36%` -> K5 `8.09%`
+- Robust subset behavior is much better:
+  - best 3-of-5 partial/full mean: `4.63%`
+  - best 4-of-5 partial/full mean: `6.23%`
+  - best 3-of-5 full mean: `4.78%`
+  - best 4-of-5 full mean: `6.71%`
+
+Current conclusion:
+
+- BC fix is valid.
+- Remaining blocker is UIPC stochasticity/outlier replicates in high-shear
+  contact.
+- Do not launch full corrected GT with plain K=3 averaging if the tangential GT
+  will be used as strong physical evidence.
+
+Next action:
+
+1. Implement or prototype a robust replicate aggregator, likely K=5 with
+   medoid/best-4 filtering by pairwise field distance.
+2. Run a small robust K=5 smoke across representative combos.
+3. Launch full corrected GT only after the robust smoke passes repeatability.
+
+---
+
+## Latest checkpoint (2026-07-01 Phase7 fixed-bottom drive calibration +07)
+
+Phase 7 root cause is now separated cleanly from render/camera:
+
+- Original realistic IPC/UIPC shear field was dominated by bottom-BC rigid drift.
+- Soft gel bottom `SoftPositionConstraint` at strength `100` causes full-slip
+  uniform tangential energy near `99.8--99.9%`.
+- The first hard-bottom test was confounded: the gel bottom was fixed, but the
+  indentor drive stayed at strength `100`, so the sphere missed its target depth
+  and made hard-bottom look artificially over-stiff.
+
+New/updated artifacts:
+
+- `data/uipc/phase7_drive_probe/summary.md`
+- `data/uipc/phase7_fixed_drive_sweep/summary.md`
+- `data/uipc/phase7_fixed_drive_sweep/ind_{1e4,3e4,1e5}/combo_000/...`
+- regenerated `data/uipc/phase7_bc_sweep/summary.md`
+
+Key result:
+
+- `soft3000 + indentor1e4` full-max still has `81.95%` uniform energy.
+- `fixed + indentor1e4` full-max drops to `24.71%` uniform energy but only
+  reaches `0.673 mm` peak depth for a `0.750 mm` target.
+- `fixed + indentor3e4` full-max drops to `25.91%` uniform energy and reaches
+  `0.749 mm` peak depth for the `0.750 mm` target.
+- `fixed + indentor1e5` also works but overshoots full-max to `0.782 mm`.
+
+Current candidate corrected setup:
+
+```bash
+GEL_BOTTOM_BC=fixed INDENTOR_CONSTRAINT_STRENGTH=3e4 VELOCITY_TOL=0.0003
+```
+
+Code updates:
+
+- `src/novbts/groundtruth/uniform_shift_diagnostic.py`
+  now reports gel BC, gel strength, indentor strength, depth max, and depth p95.
+- `infra/run_phase7_bc_sweep.sh` exposes indentor drive strength.
+- `infra/gen_uipc_trajectory_phase7.sh` exposes BC env knobs.
+- `infra/gen_uipc_sweep.sh` exposes BC env knobs for corrected production GT.
+- Syntax checks passed:
+  - `bash -n infra/run_phase7_bc_sweep.sh`
+  - `bash -n infra/gen_uipc_trajectory_phase7.sh`
+  - `bash -n infra/gen_uipc_sweep.sh`
+  - `py_compile` for UIPC driver/aggregator/diagnostic.
+
+Next action:
+
+K=3 smoke status:
+
+- `data/uipc/shear_res24_avg_swept_REALISTIC_BC_SMOKE.npz`
+  - 40 averaged frames, K=3
+  - all regimes present: mode counts `{0:4, 1:17, 2:11, 3:8}`
+  - provenance: `gel_bottom_bc=fixed`, `indentor_constraint_strength=30000`,
+    `marker_sampling=bilinear`
+  - full-slip uniform energy mean/p95: `23.78% / 26.29%`
+  - full-slip residual tangential mean: `0.069 mm`
+  - tangential replicate noise at `velocity_tol=1e-3`: mean `5.66%`, p95
+    `12.33%`
+- `data/uipc/shear_res24_avg_swept_REALISTIC_BC_SMOKE_VTOL0003.npz`
+  - 12-frame matched subset at `velocity_tol=3e-4`
+  - matched-subset tangential noise improved from `5.82%` to `3.65%`
+  - p95 improved from `10.60%` to `8.17%`
+- `data/uipc/shear_res24_avg_swept_REALISTIC_BC_SMOKE_VTOL0001.npz`
+  - mean noise improved further to `3.15%`, but p95/max worsened
+    (`9.74%` / `15.51%`), so it is less attractive than `3e-4`
+
+Next action:
+
+1. Run the full all-regime smoke at `VELOCITY_TOL=0.0003`:
+
+```bash
+rtk proxy env \
+  SWEEP_DIR=data/uipc/sweep_realistic_bc_smoke_vtol0003_full \
+  OUT_DATA=data/uipc/shear_res24_avg_swept_REALISTIC_BC_SMOKE_VTOL0003_FULL.npz \
+  GEL_BOTTOM_BC=fixed \
+  INDENTOR_CONSTRAINT_STRENGTH=3e4 \
+  TEST_SIZE=9 \
+  GEL_RES=24 EPS_VELOCITY=0.000025 D_HAT=0.0001 \
+  CONTACT_RESISTANCE=1.0e9 VELOCITY_TOL=0.0003 \
+  bash infra/gen_uipc_sweep.sh 3 12 3
+```
+
+2. Add normal top-up or run a production-shaped all-regime smoke if mode 0 is
+   missing.
+3. Run `uniform_shift_diagnostic.py`, inspect provenance, and render corrected
+   Phase 7 trajectory.
+4. Only after smoke acceptance, launch full corrected GT as
+   `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz`.
+
+## Latest checkpoint (2026-07-01 Phase7 hard-bottom test +07)
+
+Continued from BC sweep by checking whether UIPC has a true fixed-vertex route.
+
+Findings:
+
+- UIPC/TacEx does expose hard fixed FEM vertices through `builtin.is_fixed`.
+- `src/novbts/groundtruth/tacex_uipc_extract_shear.py` now has:
+  - `--gel-bottom-bc soft` (default, historical behavior)
+  - `--gel-bottom-bc fixed` (sets `builtin.is_fixed=1` on bottom vertices)
+- `gel_bottom_bc` is saved into NPZ provenance and propagated by
+  `aggregate_uipc_replicates.py`.
+- `infra/run_phase7_bc_sweep.sh` now includes fixed-bottom by default
+  (`INCLUDE_FIXED=1`).
+
+Fixed-bottom artifacts:
+
+- one-frame probe:
+  `data/uipc/phase7_constraint_probe/fixed/uipc_gt_shear.npz`
+- 4-case sweep:
+  `data/uipc/phase7_bc_sweep/fixed/combo_000/...`
+- updated summaries:
+  `data/uipc/phase7_bc_sweep/summary.json`
+  `data/uipc/phase7_bc_sweep/summary.md`
+
+Fixed-bottom sweep result:
+
+- It removes rigid shift:
+  - partial/full uniform energy `~15--18%`
+  - full mean shift only `~0.003 mm`
+- But it over-stiffens the current setup:
+  - full-mid/full-max depth p95 only `0.003--0.005 mm`
+  - local `uz` only `0.010--0.014 mm`
+
+Conclusion:
+
+- Hard fixed bottom confirms the BC mechanism, but is not production-ready under
+  the current material/contact setup.
+- Current candidate soft band remains `1000--3000`, but it still changes normal
+  response and needs K=3/mesh sanity before any regen.
+- Next useful direction: either implement/test a more nuanced bonded-bottom BC
+  (for example tangentially fixed with calibrated normal compliance, if UIPC can
+  support it) or run K=3 production-shaped smoke at soft `1000`/`3000` before
+  choosing a corrected provisional GT.
+- `Phase_7_Next_steps.md` updated accordingly.
+
+## Latest checkpoint (2026-07-01 Phase7 BC sweep completed +07)
+
+BC confirmation sweep completed after the single-frame probe.
+
+New reusable tools:
+
+- `src/novbts/groundtruth/uniform_shift_diagnostic.py`
+  - computes tangential uniform/rigid fraction, residual tangential metrics,
+    depth p95/max, and local center-edge `uz`
+- `infra/run_phase7_bc_sweep.sh`
+  - runs 4 representative UIPC cases over bottom constraint strengths
+  - writes `summary.json` and `summary.md`
+
+Artifacts:
+
+- `data/uipc/phase7_bc_sweep/cases.json`
+- `data/uipc/phase7_bc_sweep/rows.txt`
+- `data/uipc/phase7_bc_sweep/summary.json`
+- `data/uipc/phase7_bc_sweep/summary.md`
+- per-strength outputs under `data/uipc/phase7_bc_sweep/strength_*`
+
+Sweep:
+
+- strengths: `100`, `300`, `1000`, `3000`, `10000`
+- cases:
+  - `normal_mid`: depth `0.55 mm`, no shear
+  - `partial_mid`: depth `0.55 mm`, drive ratio `0.80`
+  - `full_mid`: depth `0.55 mm`, drive ratio `1.30`
+  - `full_max`: depth `0.75 mm`, drive ratio `1.30`
+
+Key results:
+
+- `strength=100` reproduces the artifact:
+  - partial/full uniform energy `99.77--99.88%`
+  - full mean shift `0.288--0.309 mm`
+  - residual mean only `0.010--0.013 mm`
+- `strength=300` still leaves full cases rigid dominated:
+  - full uniform energy `98.58--98.89%`
+- `strength=1000` is the first transition point:
+  - partial uniform energy `83.46%`
+  - full uniform energy `90.18--92.81%`
+  - residual mean `0.014--0.018 mm`
+  - depth p95 drops to `0.149--0.195 mm`
+- `strength=3000` reduces rigid shift more:
+  - full uniform energy `73.18--78.71%`
+  - mean shift `0.021--0.022 mm`
+  - but depth p95 drops to `0.084--0.112 mm`
+- `strength=10000` is very stiff:
+  - full uniform energy `54.32--55.22%`
+  - depth p95 only `0.042--0.056 mm`
+
+Conclusion:
+
+- Root cause is now confirmed across multiple cases: bottom soft constraint
+  strength `100` produces near-rigid tangential top-surface drift.
+- No production BC chosen yet.
+- Candidate soft-constraint band is roughly `1000--3000`, but this also changes
+  normal response substantially.
+- Next decisive step is to test a true hard-bottom/Dirichlet implementation or
+  better UIPC constraint formulation, then compare it against the `1000--3000`
+  band before any corrected GT production regen.
+- `Phase_7_Next_steps.md` was updated with the completed sweep and current plan.
+
+## Latest checkpoint (2026-07-01 Phase7 bottom-constraint probe +07)
+
+User's diagnosis was confirmed by a cheap UIPC single-frame probe.
+
+Problem tested:
+
+- Current IPC/UIPC tangential fields are dominated by near-rigid top-surface
+  translation instead of localized contact deformation.
+- Suspected cause: gel bottom uses UIPC `SoftPositionConstraint` with strength
+  ratio `100`, so the pad can still drift under tangential friction.
+
+Implementation changes:
+
+- `src/novbts/groundtruth/tacex_uipc_extract_shear.py`
+  - added `--gel-constraint-strength`, default `100`
+  - added `--indentor-constraint-strength`, default `100`
+  - saved both values into NPZ provenance
+- `src/novbts/groundtruth/aggregate_uipc_replicates.py`
+  - preserves those provenance keys through replicate/frame aggregation
+- Python compile passed for both files.
+
+Probe setup:
+
+- one full-slip realistic frame matching Phase7 frame 11:
+  - gel `20 x 20 x 3 mm`, `gel_res=24`
+  - `depth=0.75 mm`, `R=4 mm`, `mu=0.6`, `E=1e5 Pa`
+  - shear endpoint `(-0.390, -0.6755) mm`, drive ratio `1.3`
+  - solver knobs unchanged: `eps_velocity=2.5e-5`, `velocity_tol=1e-3`,
+    `d_hat=1e-4`, `contact_resistance=1e9`
+- artifacts:
+  - `data/uipc/phase7_constraint_probe/strength100/uipc_gt_shear.npz`
+  - `data/uipc/phase7_constraint_probe/strength1e3/uipc_gt_shear.npz`
+  - `data/uipc/phase7_constraint_probe/strength1e4/uipc_gt_shear.npz`
+
+Results on top-marker tangential field:
+
+| Gel constraint | uniform energy | uniform norm | mean shift | residual mean | residual p95 | max tangential |
+|---:|---:|---:|---:|---:|---:|---:|
+| `100` | `99.81%` | `99.90%` | `0.287 mm` | `0.012 mm` | `0.016 mm` | `0.332 mm` |
+| `1e3` | `87.88%` | `93.74%` | `0.051 mm` | `0.018 mm` | `0.023 mm` | `0.112 mm` |
+| `1e4` | `45.06%` | `67.12%` | `0.008 mm` | `0.006 mm` | `0.015 mm` | `0.070 mm` |
+
+Normal field side effect:
+
+| Gel constraint | depth p95 | depth max | local center-edge `uz` |
+|---:|---:|---:|---:|
+| `100` | `0.616 mm` | `0.643 mm` | `0.085 mm` |
+| `1e3` | `0.193 mm` | `0.294 mm` | `0.142 mm` |
+| `1e4` | `0.057 mm` | `0.166 mm` | `0.067 mm` |
+
+Conclusion:
+
+- The soft bottom constraint is a real root cause of the rigid-shift artifact.
+- Increasing bottom strength collapses the uniform rigid shift by an order of
+  magnitude, so the current realistic IPC/UIPC GT tangential channel is not a
+  trustworthy localized shear/contact-deformation target.
+- `1e4` is not automatically the production fix: it makes the pad much stiffer
+  and changes normal indentation too much.
+- Next scientific step should be a small calibration sweep over bottom boundary
+  strength and/or a true hard Dirichlet implementation, then regenerate GT only
+  after choosing a physically defensible BC.
+- Existing realistic downstream metrics remain internally consistent
+  FNO-vs-current-GT, but tangential/local VBTS evidence should be treated as
+  suspect until GT is regrounded with corrected bottom BC.
+
+## Latest checkpoint (2026-07-01 review PASS + state summary +07)
+
+Realistic-geometry reground (Phases 0-3) reviewed end-to-end and confirmed
+complete. Not just verifier-trusted: paper text re-read and cross-checked against
+regenerated JSONs (sensor cosine/round-trip, class counts, RQ2/RQ3 all match).
+
+State now:
+
+- `infra/verify_realistic_reground.py`: `REALISTIC_REGROUND_ACCEPTANCE_OK`
+  (dataset / downstream JSON / figures / paper / legacy-SHA all pass).
+- No uipc systemd service active; `0` docker containers. Nothing running.
+- Legacy dataset intact:
+  `data/uipc/shear_res24_avg_swept.npz`
+  SHA-256 `c19338b94ac8e9cded746ac689ba543fb0b24abcc03036b48453376e57f81f91`.
+- Final realistic GT: `data/uipc/shear_res24_avg_swept_REALISTIC.npz`
+  N=`2520`, train/test `2120/400`, modes `425/712/895/488`, K=3, gel
+  `20 x 20 x 3 mm`, bilinear sampling.
+- Headline: FNO rel-L2 `0.041` / dir `1.6 deg`, `12.14x` vs MLP; RQ3 speedup
+  `83204x` vs fair single solve; RQ5 cosine per regime
+  `-0.396/0.559/0.918/0.967`; inversion `15.51% / 3.79 deg`.
+- Paper `docs/kse2026/main.tex` builds clean (0 undefined refs); false Hertz
+  `1.3%` validator claim dropped, flat-punch OOD dropped, per-regime RQ5,
+  rewritten Limitations.
+
+Phase 7 (temporal/loading-history) status: SUPPLEMENTAL / DIAGNOSTIC ONLY, not
+paper evidence. The realistic thin-gel marker GIF has genuinely small local
+surface contrast (`~0.085 mm` center-edge normal, `~0.012 mm` residual
+tangential); camera auto-rescaled to the geometry (`working_dist ~9.9 mm`) but
+the imprint stays weak by construction. Use depth/residual diagnostics + metrics,
+not the marker-only GIF, if Phase 7 is shown at all.
+
+Working tree (branch `phase4-diff-policy`), uncommitted:
+
+- `PROGRESS.md`
+- `infra/gen_uipc_trajectory_phase7.sh`
+- `src/novbts/sensor/temporal.py`
+- `src/novbts/sensor/temporal_compare.py`
+
+Remaining items (USER-owned, not delegated):
+
+1. Commit the dirty working tree when ready.
+2. Paper author de-anonymization / double-blind decision.
+3. Funding acknowledgment.
+
+Deadline KSE2026: `2026-07-15`.
+
+## Latest checkpoint (2026-06-30 Phase7 root-cause confirmation +07)
+
+User reported that the updated Phase7 images still do not change much. Confirmed
+the real issue with direct field and image audits.
+
+What is true:
+
+- The camera correction is real but limited:
+  - old fixed camera `working_dist=50 mm`
+  - auto realistic camera `working_dist=9.9 mm`
+  - marker-flow increase from `~2.0--2.3 px` to `~3.1--3.3 px`
+  - image difference between old/new `temporal_video.png`: mean absolute pixel
+    diff `0.027`, p95 `0.180`
+- The physical field still has weak *local* shape:
+  - final local center-edge normal contrast only `0.085--0.086 mm`
+  - residual non-rigid tangential mean only `~0.012 mm`
+  - most visible `z` camera motion comes from broad/near-uniform top-surface
+    vertical displacement, not a localized sphere imprint
+- The trajectory itself is not a press-in trajectory:
+  - UIPC `_trajectory_snap_indices()` sets `f=0` to `shear_start - 1`
+  - therefore `disp_traj[:,0]` is already the settled pure-normal pressed state
+  - `f=0..1` only records lateral/shear loading after press
+  - local normal contrast is basically flat over trajectory:
+    `~0.087 mm` at `f=0` to `~0.085 mm` at `f=1`
+
+Implementation update:
+
+- `src/novbts/sensor/temporal.py` now records:
+  - `trajectory_semantics`
+  - per-load-mode `field_stats.by_frac`
+  - final z-only and xy-only marker-flow decomposition
+- Re-rendered `runs/phase7/temporal.*`.
+
+Root-cause conclusion:
+
+- The updated images are not dramatically different because Phase7 is currently
+  visualizing a shear-after-press path whose normal imprint is already present at
+  frame 0 and is spatially weak/local-low-contrast.
+- To show a sphere visibly pressing into gel, we need a different trajectory
+  capture that includes press snapshots from rest through indentation, not just
+  lateral shear snapshots after normal loading.
+- To make the existing Phase7 useful, present it as loading-history/shear-path
+  evidence and use depth/residual diagnostics for the normal field.
+
+## Latest checkpoint (2026-06-30 Phase7 camera-scale correction +07)
+
+User correctly pointed out that the camera/view should change with the realistic
+gel scale. Confirmed: Phase 7 temporal renderer was still using the old absolute
+`working_dist=50 mm`, inherited from the large old geometry. Because
+`PinholeCamera.from_gel(...)` auto-fits the rest marker footprint, this did not
+change the rest FOV, but it strongly suppressed `uz`-driven perspective/magnify
+motion. Normal-depth sensitivity scales roughly with `|uz| / working_dist`.
+
+Fix applied:
+
+- `src/novbts/sensor/temporal.py`
+  - `--working-dist` now defaults to auto rather than fixed `0.05`.
+  - auto distance is `working_dist_ratio * marker_half_extent`, default ratio
+    `1.1`.
+  - This preserves the old large-gel view (`45 mm * 1.1 ~= 50 mm`) while giving
+    the realistic Phase7 gel `9 mm * 1.1 ~= 9.9 mm`.
+  - `runs/phase7/temporal.json` now records the camera block.
+- `src/novbts/sensor/temporal_compare.py` uses the same auto-scaled camera so
+  GT-vs-FNO temporal comparison matches the GIF view.
+- Re-rendered `runs/phase7/temporal.*` from
+  `data/uipc/trajectory_phase7_fullslip/shear_res24_traj_REALISTIC.npz`.
+
+New Phase7 camera/render numbers:
+
+- auto camera: marker half extent `9.0 mm`, working distance `9.9 mm`
+- final mean marker flow increased from the stale-camera `~2.0--2.3 px` to
+  `3.12--3.26 px`
+- flow decomposition at final full-slip frames:
+  z-perspective-only `2.51--2.62 px`, xy-only `1.86--2.16 px`
+- physical field magnitude remains small:
+  local center-edge normal contrast `0.085--0.086 mm`,
+  detrended tangential residual mean `~0.012 mm`
+
+Interpretation update:
+
+- The previous "field is physically small" conclusion still holds in mm-space.
+- But the previous marker GIF was also under-sensitive because the camera had
+  not been rescaled with the geometry.
+- For Phase7 visuals, use the auto-scaled camera outputs now in `runs/phase7/`.
+
+## Latest checkpoint (2026-06-30 Phase7 deformation visibility decision +07)
+
+Phase 7 issue investigated: apparent deformation remains too low throughout the
+trajectory because the realistic UIPC field genuinely has very small local
+surface contrast, not because the temporal renderer/model lost the signal.
+
+Fresh audit on
+`data/uipc/trajectory_phase7_fullslip/shear_res24_traj_REALISTIC.npz`:
+
+- selected full-slip frames use `depth=0.75 mm`, `R=4.0 mm`,
+  `shear=0.78 mm`
+- marker stream final mean flow is visible but modest: `1.98--2.28 px`
+- local normal imprint is tiny:
+  `center-minus-edge -uz = 0.085--0.086 mm`
+- detrended tangential residual is smaller:
+  mean `0.012 mm`, max `0.022--0.045 mm`
+
+Comparison points:
+
+- production realistic static dataset max local normal contrast is only about
+  `0.178 mm`, residual lateral mean about `0.023 mm`
+- old PhysX dataset had several-mm local normal contrast and
+  `~0.34--0.79 mm` residual lateral means, so its marker GIF looked like a
+  strong sphere press for scale reasons
+- scaled/stress pilots (`R=8 mm`, `depth=1.2 mm`) improve visibility only to
+  about `0.19 mm` local normal contrast and `0.025--0.031 mm` residual lateral
+  mean; they are diagnostic visuals, not paper evidence
+
+Implementation update:
+
+- `src/novbts/sensor/temporal.py` now writes quantitative `field_stats` into
+  `runs/phase7/temporal.json` alongside the GIF/figures.
+- Re-rendered Phase7 full-slip temporal artifacts in `runs/phase7/`.
+
+Decision:
+
+- Do not spend more time trying to make the realistic marker-only GIF look like
+  the old PhysX sphere press; that would require non-realistic geometry/scale or
+  visual exaggeration.
+- For Phase 7 evidence, use `temporal_depth_residual.png`,
+  `phase7_field_diagnostic.png`, and `temporal.json` metrics.
+- If a visibly intuitive animation is needed, label it explicitly as a
+  diagnostic/stress visualization and keep it separate from paper evidence.
+
+## Latest checkpoint (2026-06-30 Phase7 temporal visual audit +07)
+
+User compared old PhysX trajectory figures with new UIPC Phase7 and correctly
+flagged that the new marker GIF does not visually look like a sphere pressing
+into gel.
+
+Audit result:
+
+- This is not an FNO/temporal-model failure. The UIPC Phase7 GT contains normal
+  indentation in `uz`, but at realistic scale the visible marker image is
+  dominated by nearly uniform in-plane shear translation.
+- Old PhysX example frame `data/fem/shear_fine_swept_normaug.npz[1643]`:
+  depth `6.73 mm`, radius `24.7 mm`, shear `6.76 mm`,
+  local center-edge normal contrast `3.57 mm`,
+  detrended lateral residual mean/max `0.62/2.12 mm`.
+- New UIPC Phase7 full-slip example
+  `data/uipc/trajectory_phase7_fullslip/shear_res24_traj_REALISTIC.npz[9]`:
+  depth `0.75 mm`, radius `4.0 mm`, shear `0.78 mm`,
+  local center-edge normal contrast `0.075 mm`,
+  detrended lateral residual mean/max `0.012/0.021 mm`.
+- Therefore the old PhysX dot render looked like a strong sphere press because
+  the physical scale and local residual deformation were much larger. The
+  realistic UIPC dot render should not be expected to match that look.
+
+Pipeline update:
+
+- `infra/gen_uipc_trajectory_phase7.sh` defaults were strengthened for a
+  full-slip Phase7 pilot:
+  - default depths `0.35/0.55/0.75 mm`
+  - default drive ratios `0.30/0.80/1.30`
+  - env overrides `DEPTH_LEVELS`, `DRIVE_LEVELS`
+- `src/novbts/sensor/temporal.py` now writes extra visual diagnostics:
+  - `runs/phase7/temporal_depth_residual.png`
+  - `runs/phase7/phase7_field_diagnostic.png`
+- Re-rendered Phase7 temporal outputs from
+  `data/uipc/trajectory_phase7_fullslip/shear_res24_traj_REALISTIC.npz`.
+- Additional visibility tests:
+  - Rendered production realistic max-contact frames to
+    `runs/phase7/realistic_max_contact_visibility.png`.
+  - Ran one diagnostic-only UIPC stress case, not paper evidence:
+    `data/uipc/phase7_visibility_stress/r8_d12_normal/uipc_gt_shear.npz`
+    with `R=8 mm`, `depth=1.2 mm`, normal-only.
+  - Stress case increased local normal contrast from `0.055 mm` (production max
+    normal, `R=6 mm`, `depth=0.75 mm`) to `0.166 mm`, and residual lateral
+    mean/max from `0.008/0.009 mm` to `0.025/0.029 mm`.
+  - Stress comparison figure:
+    `runs/phase7/stress_contact_visibility.png`.
+
+Interpretation for paper:
+
+- Do not use the marker-only Phase7 GIF as primary evidence for sphere
+  indentation.
+- If Phase7 is included, show the normal-depth/residual diagnostic or frame it
+  as a supplemental temporal/path sanity check, not a main benchmark result.
+
 ## Latest checkpoint (2026-06-30 GPU rerun +07)
 
 User noticed sandbox Python was not using GPU. Confirmed:
