@@ -2,14 +2,14 @@
 
 An **FNO** learns marker displacement fields as a fast surrogate that replaces an
 expensive contact solver, for downstream RL/control. The current paper headline
-numbers are produced on the realistic **IPC/UIPC** thin-gel dataset:
+numbers are produced on the corrected-BC realistic **IPC/UIPC** thin-gel dataset:
 
-`data/uipc/shear_res24_avg_swept_REALISTIC.npz`
+`data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz`
 
 The headline benchmark is **not** `operator/field2field.py`. It is
 `operator/fem_benchmark.py`, which imports the shared model definitions but loads
 the IPC/UIPC `.npz` directly and reports the paper metrics (for example FNO
-`0.041 / 1.6 deg` and `12.14x` over the per-point MLP).
+`0.074 / 1.6 deg` and `7.35x` over the per-point MLP).
 
 `operator/field2field.py` is retained as an analytic Hertz--Mindlin
 proof-of-concept of the same field-to-field framing. It should not be used to
@@ -60,21 +60,23 @@ Paths resolve from the repo root via `novbts.paths`, so modules run from any CWD
 
 ```bash
 python -m novbts.operator.fem_benchmark \
-  --data data/uipc/shear_res24_avg_swept_REALISTIC.npz
+  --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
                                                 # paper headline RQ1/RQ2/RQ3 on IPC/UIPC GT
 python -m novbts.operator.vbts_baselines \
-  --data data/uipc/shear_res24_avg_swept_REALISTIC.npz
+  --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
                                                 # paper baseline bakeoff on same IPC/UIPC split
 python -m novbts.operator.field2field           # analytic field→field PoC only
 python -m novbts.report.make_kse_figs           # regenerate KSE figures from current runs/
-python infra/verify_realistic_reground.py       # acceptance check for paper/data/figures
+python infra/verify_bc_reground.py              # acceptance check for data/downstream/paper
 ```
 
 ## Data
 
-- `data/uipc/shear_res24_avg_swept_REALISTIC.npz` — current IPC/UIPC paper GT:
-  thin gel `20 x 20 x 3 mm`, res-24, marker grid `32 x 32`, `N=2520`, `K=3`
-  averaged replicates, deterministic `2120/400` train/test split.
+- `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz` — current IPC/UIPC paper GT:
+  thin gel `20 x 20 x 3 mm`, res-24, marker grid `32 x 32`, `N=2520`, corrected
+  fixed-bottom BC, adaptive `K<=5` robust-averaged replicates, deterministic
+  `2120/400` train/test split. (`..._REALISTIC.npz` is the soft-BC predecessor,
+  kept as provenance; its tangential channel carries a rigid-drift artifact.)
 - `data/analytic/` — Hertz–Mindlin train (16k) / val / test / OOD splits, side-32 marker grid.
   Used by `field2field.py` as a proof-of-concept, not as the paper headline GT.
 - `data/fem/normal.npz` — PhysX-FEM ground truth, normal indentation (40 frames).

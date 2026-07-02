@@ -1,6 +1,59 @@
 # PROGRESS: realistic VBTS gel geometry reground
 
-## Latest checkpoint (2026-07-01 Phase7 vtol0003 full smoke + K5 outlier audit +07)
+## Latest checkpoint (2026-07-02 corrected-BC production reground COMPLETE, Phase D+E done +07)
+
+Corrected-BC production GT, full downstream rerun, and paper reground are all
+complete and acceptance-gated.
+
+Production GT:
+
+- sweep `data/uipc/sweep_realistic_bc`: 63 combos x 40 frames x K=5 raw reps
+  = 12600 solves, finished clean via `uipc-realistic-bc-resume.service`
+- final dataset `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz`
+  - N=2520, modes 425/712/895/488, `gel_bottom_bc=fixed`,
+    `indentor_constraint_strength=30000`, `velocity_tol=3e-4`
+  - adaptive-K aggregation: kept-K distribution 5:1397 / 4:318 / 3:331 / 2:474
+    (44% of full-slip frames keep only 2 reps — reported in paper Limitations)
+  - full-slip uniform tangential energy mean/p95: `22.0% / 27.0%` (old ~99.8%)
+  - tangential rep-noise mean: normal/stick/partial/full
+    `1.4% / 2.0% / 3.5% / 4.4%`
+
+Phase D downstream (all six JSONs fresh, `gt=..._REALISTIC_BC.npz`, ~65 min GPU):
+
+- RQ1: FNO rel-L2 `0.074` / dir `1.6 deg`; MLP `0.545` / `41.9 deg` -> `7.35x`
+- Table 1 advantages: C-M `11.19x`, TACTO `8.85x`, MLP `7.35x`, Taxim `4.07x`,
+  Galerkin `2.04x`, DeepONet `1.55x`, U-Net `1.15x`
+- slip head a macro-F1 `0.937` (binary `0.975`), head b `0.763`
+- RQ2 degradation R/mu/E: `2.60x / 1.95x / 1.36x` (now radius-sensitive)
+- RQ3: FNO `7920 fps` vs fair single solve `0.192 fps` -> `41253x`
+  (timing source `raw_n_replicates` after the solver-fps fix; production
+  adaptive-K rate `0.038 fps`)
+- RQ4: autograd `1.99e-10` vs ES `2.24e-10`; queries-to-target 81 vs 6251
+  (`77x`); wall `13.13 s` vs `312.05 s` (`23.8x`)
+- RQ5: flow/disp cosine >= `0.998` in ALL four regimes (old normal was
+  `-0.396` — BC fix removed the noise-dominated tangential channel);
+  round-trip px `0.11/0.14/0.26/0.39`; image inversion `12.6% / 3.4 deg`;
+  env gap closed `99.8%`, FD diagnostic `7.31%` (still phrased as sanity check)
+
+Phase E paper:
+
+- `docs/kse2026/main.tex` fully reground to corrected-BC numbers (abstract,
+  contributions, RQ1-RQ5, Table 1, control table, fig captions, setup now
+  documents adaptive-K, Limitations rewritten with kept-K/noise disclosure;
+  negative-cosine caveat replaced by all-regime coherence)
+- rebuilt `main.pdf`: 0 undefined refs
+- README headline/dataset/verifier references updated to `_BC`
+- `infra/verify_bc_reground.py` extended with downstream + paper gates;
+  final run prints `BC_REGROUND_ACCEPTANCE_OK`
+- `infra/run_bc_downstream.sh` added (BC Phase D runner, gates via verifier,
+  backups `*.PRE_BC.*`)
+- NOTE: `infra/verify_realistic_reground.py` is now era-bound to the soft-BC
+  dataset/paper and will fail against the BC paper — use `verify_bc_reground.py`
+
+Remaining (user-owned): push decision, de-anonymization, funding note
+(`main.tex` line ~452 todo). Deadline KSE2026: `2026-07-15`.
+
+## Previous checkpoint (2026-07-01 Phase7 vtol0003 full smoke + K5 outlier audit +07)
 
 All-regime smoke with corrected boundary conditions completed, but it should NOT
 be treated as full production acceptance yet.

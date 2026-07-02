@@ -141,9 +141,73 @@ def verify_dataset() -> dict[str, object]:
     return {"frames": int(n)}
 
 
+DOWNSTREAM_JSONS = (
+    "runs/phase3_fem/benchmark.json",
+    "runs/phase3_fem/vbts_baselines.json",
+    "runs/phase4/policy_servo.json",
+    "runs/phase5/sensor_build.json",
+    "runs/phase5/sensor_inverse_multiframe.json",
+    "runs/phase6/env_demo.json",
+)
+PAPER_FIGS = (
+    "docs/kse2026/figs/fidelity_speed.png",
+    "docs/kse2026/figs/policy_servo_curve.png",
+    "docs/kse2026/figs/sensor_gt_vs_fno.png",
+)
+# Claims that must appear in main.tex after the corrected-BC reground.
+PAPER_REQUIRED = (
+    "$7.35\\times$", "$4.1$--$11.2\\times$", "$77\\times$", "$23.8\\times$",
+    "$\\relL=0.074$", "$41{,}253\\times$", "K{=}5",
+)
+# Stale soft-BC-era claims that must no longer appear anywhere.
+PAPER_FORBIDDEN = (
+    "12.14", "12.63", "82{,}827", "82,827", "5.54", "$84\\times$",
+    "0.041$", "7803", "317.75", "K{=}3", "$15.5\\%$",
+)
+
+
+def verify_downstream() -> None:
+    import json
+
+    npz_mtime = DATA.stat().st_mtime
+    for rel in DOWNSTREAM_JSONS:
+        path = ROOT / rel
+        require(path.is_file(), f"missing downstream JSON: {rel}")
+        require(path.stat().st_mtime > npz_mtime, f"stale downstream JSON: {rel}")
+        blob = json.loads(path.read_text())
+        require(blob.get("gt") == DATA.name, f"{rel} gt provenance is {blob.get('gt')}")
+        print("DOWNSTREAM_OK", rel)
+    bench = json.loads((ROOT / DOWNSTREAM_JSONS[0]).read_text())
+    fno = bench["RQ1"]["fno"]["relative_l2"]["overall"]
+    mlp = bench["RQ1"]["mlp"]["relative_l2"]["overall"]
+    require(fno < mlp, f"FNO ({fno}) does not beat MLP ({mlp})")
+    require(bench["RQ3"]["solver_timing_source"] == "npz_solve_time_s/raw_n_replicates",
+            "RQ3 solver timing does not use raw_n_replicates")
+    for rel in PAPER_FIGS:
+        path = ROOT / rel
+        require(path.is_file() and path.stat().st_mtime > npz_mtime,
+                f"missing/stale paper figure: {rel}")
+    print("DOWNSTREAM_FIGS_OK")
+
+
+def verify_paper() -> None:
+    tex = (ROOT / "docs/kse2026/main.tex").read_text()
+    for claim in PAPER_REQUIRED:
+        require(claim in tex, f"paper missing corrected-BC claim: {claim}")
+    for stale in PAPER_FORBIDDEN:
+        require(stale not in tex, f"paper still contains stale claim: {stale}")
+    log = ROOT / "docs/kse2026/main.log"
+    if log.is_file():
+        require("undefined" not in log.read_text().lower(),
+                "main.log reports undefined references")
+    print("PAPER_OK")
+
+
 def main() -> None:
     verify_legacy_sha()
     verify_dataset()
+    verify_downstream()
+    verify_paper()
     print("BC_REGROUND_ACCEPTANCE_OK")
 
 
