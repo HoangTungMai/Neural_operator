@@ -77,7 +77,10 @@ def main():
     ap.add_argument("--px", type=int, default=160)
     ap.add_argument("--sensor-marker-side", type=int, default=11)
     ap.add_argument("--marker-pixel-fill", type=float, default=0.75)
-    ap.add_argument("--working-dist", type=float, default=0.05)
+    ap.add_argument("--working-dist", type=float, default=None,
+                    help="camera-to-membrane distance in metres; default scales with marker footprint")
+    ap.add_argument("--working-dist-ratio", type=float, default=1.1,
+                    help="used when --working-dist is omitted: distance = ratio * marker half-extent")
     ap.add_argument("--sigma", type=float, default=1.35)
     ap.add_argument("--background", type=float, default=0.72)
     ap.add_argument("--contrast", type=float, default=0.58)
@@ -112,7 +115,9 @@ def main():
     print(f"[FNO] trained {secs:.0f}s on {args.fno_data} ({count_parameters(fno)} params)")
 
     # ---- sensor ----
-    cam = PinholeCamera.from_gel(marker_half_extent(coords), px=args.px, working_dist=args.working_dist)
+    marker_half = marker_half_extent(coords)
+    working_dist = args.working_dist if args.working_dist is not None else args.working_dist_ratio * marker_half
+    cam = PinholeCamera.from_gel(marker_half, px=args.px, working_dist=working_dist)
     dense_t = torch.tensor(coords, device=DEV)
     sensor_coords = sensor_marker_grid_pixel_even(cam, args.sensor_marker_side, pixel_fill=args.marker_pixel_fill)
     sensor_t = torch.tensor(sensor_coords, device=DEV)
@@ -200,6 +205,9 @@ def main():
     print(f"  field rel-L2 (physics) = {np.mean(all_rel):.3f}")
 
     rep = {"data": args.data, "fno_data": args.fno_data,
+           "camera": {**cam.as_dict(), "marker_half_extent_m": float(marker_half),
+                      "working_dist_auto": args.working_dist is None,
+                      "working_dist_ratio": float(args.working_dist_ratio)},
            "episodes": {LOAD_MODES[l]: fi for l, fi in picks},
            "fracs": fracs.tolist(), "per_mode_rel_l2": per_mode_rel,
            "mean_rel_l2": float(np.mean(all_rel)),

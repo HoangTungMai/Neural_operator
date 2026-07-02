@@ -32,7 +32,10 @@ def main():
     ap.add_argument("--px", type=int, default=160)
     ap.add_argument("--sensor-marker-side", type=int, default=11)
     ap.add_argument("--marker-pixel-fill", type=float, default=0.75)
-    ap.add_argument("--working-dist", type=float, default=0.05)
+    ap.add_argument("--working-dist", type=float, default=None,
+                    help="camera-to-membrane distance in metres; default scales with marker footprint")
+    ap.add_argument("--working-dist-ratio", type=float, default=1.1,
+                    help="used when --working-dist is omitted: distance = ratio * marker half-extent")
     ap.add_argument("--sigma", type=float, default=1.35)
     ap.add_argument("--background", type=float, default=0.72)
     ap.add_argument("--contrast", type=float, default=0.58)
@@ -51,7 +54,9 @@ def main():
     side = int(round(M ** 0.5))
     print(f"device={DEV}  temporal  data={args.data}  N={N} T={T} M={M} side={side}")
 
-    cam = PinholeCamera.from_gel(marker_half_extent(coords), px=args.px, working_dist=args.working_dist)
+    marker_half = marker_half_extent(coords)
+    working_dist = args.working_dist if args.working_dist is not None else args.working_dist_ratio * marker_half
+    cam = PinholeCamera.from_gel(marker_half, px=args.px, working_dist=working_dist)
     dense_t = torch.tensor(coords, device=DEV)
     sensor_coords = sensor_marker_grid_pixel_even(cam, args.sensor_marker_side, pixel_fill=args.marker_pixel_fill)
     sensor_t = torch.tensor(sensor_coords, device=DEV)
@@ -59,11 +64,18 @@ def main():
     pix_rest = cam.project(deformed_marker_xyz(sensor_t, torch.zeros(1, m, 3, device=DEV)))   # [1,m,2]
     render_kw = dict(background=args.background, contrast=args.contrast, polarity="dark", saturate=True)
 
+    def traj_to_markers(frame_idx):
+        """[T,m,3] visible marker displacements over the loading path for one frame."""
+        fld = torch.tensor(traj[frame_idx], device=DEV).view(T, side, side, 3).permute(0, 3, 1, 2)
+        return sample_field_to_markers(fld, dense_t, sensor_t)      # [T,m,3]
+
+    def markers_to_pix(markers):
+        """[B,m,3] marker displacements -> [B,m,2] sensor pixel positions."""
+        return cam.project(deformed_marker_xyz(sensor_t, markers))
+
     def traj_to_pix(frame_idx):
         """[T,m,2] sensor pixel positions over the loading path for one frame."""
-        fld = torch.tensor(traj[frame_idx], device=DEV).view(T, side, side, 3).permute(0, 3, 1, 2)
-        mk = sample_field_to_markers(fld, dense_t, sensor_t)        # [T,m,3]
-        return cam.project(deformed_marker_xyz(sensor_t, mk))       # [T,m,2]
+        return markers_to_pix(traj_to_markers(frame_idx))
 
     # one representative high-shear frame per load mode
     smag = np.hypot(params[:, 4], params[:, 5])
@@ -76,13 +88,61 @@ def main():
             picks.append((lm, int(idx[np.argmax(smag[idx])])))
 
     slip_curves = {}
+    field_stats = {}
     for lm, fi in picks:
-        pix = traj_to_pix(fi)
+        mk = traj_to_markers(fi)
+        pix = markers_to_pix(mk)
         flow = (pix - pix_rest).norm(dim=-1).mean(1).cpu().numpy()  # mean marker flow vs t
         slip_curves[LOAD_MODES[lm]] = flow.tolist()
+        mk_final = mk[-1:]
+        z_only = mk_final.clone()
+        z_only[..., :2] = 0.0
+        xy_only = mk_final.clone()
+        xy_only[..., 2] = 0.0
+        z_flow = (markers_to_pix(z_only) - pix_rest).norm(dim=-1).mean().item()
+        xy_flow = (markers_to_pix(xy_only) - pix_rest).norm(dim=-1).mean().item()
+
+        fld = traj[fi].reshape(T, side, side, 3)
+        depth_mm = -fld[..., 2] * 1e3
+        uxy_mm = fld[..., :2] * 1e3
+        rr = np.hypot(coords[:, 0].reshape(side, side) - coords[:, 0].mean(),
+                      coords[:, 1].reshape(side, side) - coords[:, 1].mean())
+        center = rr < np.percentile(rr, 10)
+        edge = rr > np.percentile(rr, 75)
+        mean_uxy = uxy_mm.reshape(T, -1, 2).mean(1)
+        residual = uxy_mm - mean_uxy[:, None, None, :]
+        residual_mag = np.linalg.norm(residual.reshape(T, -1, 2), axis=-1)
+        field_stats[LOAD_MODES[lm]] = {
+            "frame": int(fi),
+            "depth_param_mm": float(params[fi, 2] * 1e3),
+            "radius_param_mm": float(params[fi, 3] * 1e3),
+            "shear_param_mm": float(smag[fi] * 1e3),
+            "by_frac": [
+                {
+                    "frac": float(fracs[t]),
+                    "abs_depth_mm_p95": float(np.percentile(depth_mm[t], 95)),
+                    "local_center_minus_edge_depth_mm": float(depth_mm[t][center].mean() - depth_mm[t][edge].mean()),
+                    "residual_uxy_mean_mm": float(residual_mag[t].mean()),
+                }
+                for t in range(T)
+            ],
+            "final_abs_depth_mm_p95": float(np.percentile(depth_mm[-1], 95)),
+            "final_local_center_minus_edge_depth_mm": float(depth_mm[-1][center].mean() - depth_mm[-1][edge].mean()),
+            "final_mean_rigid_uxy_mm": [float(x) for x in mean_uxy[-1]],
+            "final_residual_uxy_mean_mm": float(residual_mag[-1].mean()),
+            "final_residual_uxy_max_mm": float(residual_mag[-1].max()),
+            "final_mean_marker_flow_px": float(flow[-1]),
+            "final_z_only_marker_flow_px": float(z_flow),
+            "final_xy_only_marker_flow_px": float(xy_flow),
+        }
 
     rep = {"data": args.data, "N": int(N), "T": int(T), "fracs": fracs.tolist(),
-           "picks": {LOAD_MODES[lm]: fi for lm, fi in picks}, "slip_curves": slip_curves}
+           "picks": {LOAD_MODES[lm]: fi for lm, fi in picks}, "slip_curves": slip_curves,
+           "trajectory_semantics": "f=0 is the settled pure-normal pressed state; f=1 is the final shear endpoint",
+           "camera": {**cam.as_dict(), "marker_half_extent_m": float(marker_half),
+                      "working_dist_auto": args.working_dist is None,
+                      "working_dist_ratio": float(args.working_dist_ratio)}}
+    rep["field_stats"] = field_stats
 
     phase_dir = RUNS / args.out_dir; ensure(phase_dir)
     try:
@@ -111,6 +171,83 @@ def main():
         fig.tight_layout(); fig.savefig(phase_dir / "temporal_video.png", dpi=130); plt.close(fig)
         rep["video"] = str(phase_dir / "temporal_video.png")
         print(f"saved {phase_dir/'temporal_video.png'}")
+
+        # The marker camera mixes in-plane flow and z-perspective magnification.
+        # Save the physical normal field explicitly so the mm-scale sphere imprint
+        # can be read without relying on camera sensitivity alone.
+        xx = coords[:, 0].reshape(side, side) * 1e3
+        yy = coords[:, 1].reshape(side, side) * 1e3
+        all_depth = -traj[..., 2] * 1e3
+        dvmin = max(0.0, float(np.percentile(all_depth, 1)))
+        dvmax = float(np.percentile(all_depth, 99))
+        figd, axd = plt.subplots(len(picks), ncol, figsize=(2.1 * ncol, 2.25 * len(picks)), squeeze=False)
+        for r, (lm, fi) in enumerate(picks):
+            for c, t in enumerate(cols):
+                ax = axd[r, c]
+                fld = traj[fi, t].reshape(side, side, 3)
+                depth = -fld[..., 2] * 1e3
+                imd = ax.imshow(depth, origin="lower", cmap="magma",
+                                extent=[xx.min(), xx.max(), yy.min(), yy.max()],
+                                vmin=dvmin, vmax=dvmax)
+                u = fld[..., :2] * 1e3
+                ures = u - u.reshape(-1, 2).mean(0)
+                step = max(1, side // 8)
+                ax.quiver(xx[::step, ::step], yy[::step, ::step],
+                          ures[::step, ::step, 0], ures[::step, ::step, 1],
+                          color="cyan", angles="xy", scale_units="xy",
+                          scale=0.08, width=0.004)
+                ax.set_title((f"{LOAD_MODES[lm]}\n" if c == 0 else "") + f"f={fracs[t]:.2f}", fontsize=8)
+                ax.set_aspect("equal", adjustable="box")
+                ax.set_xticks([]); ax.set_yticks([])
+        figd.suptitle("Normal indentation -uz (mm) + detrended tangential residual", fontsize=11)
+        figd.subplots_adjust(right=0.93, top=0.88, wspace=0.05, hspace=0.18)
+        cax = figd.add_axes([0.945, 0.16, 0.012, 0.66])
+        cb = figd.colorbar(imd, cax=cax); cb.set_label("-uz (mm)")
+        figd.savefig(phase_dir / "temporal_depth_residual.png", dpi=130); plt.close(figd)
+        rep["depth_residual"] = str(phase_dir / "temporal_depth_residual.png")
+        print(f"saved {phase_dir/'temporal_depth_residual.png'}")
+
+        if picks:
+            lm, fi = picks[-1]
+            fld = traj[fi, -1].reshape(side, side, 3)
+            depth = -fld[..., 2] * 1e3
+            rr = np.hypot(xx - xx.mean(), yy - yy.mean())
+            edge = rr > np.percentile(rr, 75)
+            local_depth = depth - depth[edge].mean()
+            u = fld[..., :2] * 1e3
+            umean = u.reshape(-1, 2).mean(0)
+            ures = u - umean
+            step = max(1, side // 10)
+            figq, axq = plt.subplots(1, 4, figsize=(13.5, 3.6))
+            im0 = axq[0].imshow(depth, origin="lower", cmap="magma",
+                                extent=[xx.min(), xx.max(), yy.min(), yy.max()])
+            axq[0].set_title("absolute -uz (mm)")
+            im1 = axq[1].imshow(local_depth, origin="lower", cmap="coolwarm",
+                                extent=[xx.min(), xx.max(), yy.min(), yy.max()])
+            axq[1].set_title("local -uz minus edge (mm)")
+            axq[2].imshow(depth, origin="lower", cmap="Greys",
+                          extent=[xx.min(), xx.max(), yy.min(), yy.max()], alpha=0.35)
+            axq[2].quiver(xx[::step, ::step], yy[::step, ::step],
+                          u[::step, ::step, 0], u[::step, ::step, 1],
+                          color="red", angles="xy", scale_units="xy", scale=0.7, width=0.004)
+            axq[2].set_title(f"absolute uxy, mean=({umean[0]:.3f},{umean[1]:.3f}) mm")
+            axq[3].imshow(local_depth, origin="lower", cmap="Greys",
+                          extent=[xx.min(), xx.max(), yy.min(), yy.max()], alpha=0.35)
+            axq[3].quiver(xx[::step, ::step], yy[::step, ::step],
+                          ures[::step, ::step, 0], ures[::step, ::step, 1],
+                          color="cyan", angles="xy", scale_units="xy", scale=0.08, width=0.004)
+            axq[3].set_title("detrended uxy residual")
+            for ax in axq:
+                ax.set_aspect("equal", adjustable="box")
+                ax.set_xlabel("x mm")
+                ax.set_yticks([])
+            figq.colorbar(im0, ax=axq[0], fraction=0.046, pad=0.02)
+            figq.colorbar(im1, ax=axq[1], fraction=0.046, pad=0.02)
+            figq.suptitle(f"Phase 7 final field diagnostic ({LOAD_MODES[lm]})", fontsize=11)
+            figq.tight_layout()
+            figq.savefig(phase_dir / "phase7_field_diagnostic.png", dpi=130); plt.close(figq)
+            rep["field_diagnostic"] = str(phase_dir / "phase7_field_diagnostic.png")
+            print(f"saved {phase_dir/'phase7_field_diagnostic.png'}")
 
         # slip signal vs load fraction
         fig2, ax = plt.subplots(figsize=(6.5, 4.2))
