@@ -42,3 +42,6 @@ scratchpad/
 
 # Codex handoff scratch area (task/report .md + logs) — not version controlled
 codex/
+
+# one-time pre-corrected-BC backups (originals already in git history / runs backups)
+*.PRE_BC.*
