@@ -39,7 +39,7 @@ def fig_fidelity_speed() -> None:
         ("FNO+slip(a)", fps["fno_mt_a"], rl2("fno_mt_a"), "tab:green", (-10, 8), "right"),
     ]
     solver_fps = fps.get("gt_solver", fps["physx_fem_shear_solver"])
-    solver_k3_fps = fps.get("gt_solver_k3_averaged")
+    solver_avg_fps = fps.get("gt_solver_averaged", fps.get("gt_solver_k3_averaged"))
 
     fig, ax = plt.subplots(figsize=(6.4, 4.0))
     for name, x, y, c, off, ha in pts:
@@ -52,17 +52,17 @@ def fig_fidelity_speed() -> None:
     ax.set_ylabel("relative L2 (lower = more accurate)")
     ax.set_title("Fidelity vs. speed (IPC/GIPC ground truth)")
     ax.set_ylim(0.0, max(p[2] for p in pts) * 1.18)
-    xmin = (solver_k3_fps or solver_fps) * 0.55
+    xmin = (solver_avg_fps or solver_fps) * 0.55
     ax.set_xlim(xmin, fps["mlp"] * 3.0)
     ax.grid(True, which="both", alpha=0.25)
     ax.axvline(solver_fps, ls="--", color="0.45", lw=1.4, zorder=1)
     ax.text(solver_fps * 1.35, 0.30,
             f"single IPC solve\n{solver_fps:.3f} fps",
             rotation=90, va="center", ha="left", color="0.35", fontsize=8.5)
-    if solver_k3_fps is not None:
-        ax.axvline(solver_k3_fps, ls=":", color="0.55", lw=1.4, zorder=1)
-        ax.text(solver_k3_fps * 1.35, 0.11,
-                f"K=3 target\n{solver_k3_fps:.3f} fps",
+    if solver_avg_fps is not None:
+        ax.axvline(solver_avg_fps, ls=":", color="0.55", lw=1.4, zorder=1)
+        ax.text(solver_avg_fps * 1.35, 0.11,
+                f"robust target\n{solver_avg_fps:.3f} fps",
                 rotation=90, va="center", ha="left", color="0.45", fontsize=8.5)
     fig.tight_layout()
     out = FIGS / "fidelity_speed.png"
