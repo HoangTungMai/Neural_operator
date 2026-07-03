@@ -35,6 +35,9 @@ Z.~Si and W.~Yuan, ``{Taxim}: An example-based simulation model for {GelSight} t
 \bibitem{li2021fno}
 Z.~Li, N.~Kovachki, K.~Azizzadenesheli, B.~Liu, K.~Bhattacharya, A.~Stuart, and A.~Anandkumar, ``Fourier neural operator for parametric partial differential equations,'' in \emph{International Conference on Learning Representations (ICLR)}, 2021.
 
+\bibitem{wen2022ufno}
+G.~Wen, Z.~Li, K.~Azizzadenesheli, A.~Anandkumar, and S.~M. Benson, ``{U-FNO}---an enhanced {Fourier} neural operator-based deep-learning model for multiphase flow,'' \emph{Advances in Water Resources}, vol. 163, p. 104180, 2022.
+
 \bibitem{suh2022diffsim}
 H.~J. Suh, M.~Simchowitz, K.~Zhang, and R.~Tedrake, ``Do differentiable simulators give better policy gradients?'' in \emph{International Conference on Machine Learning (ICML)}, 2022.
 

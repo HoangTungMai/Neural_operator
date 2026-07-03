@@ -382,6 +382,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"])
     ap.add_argument("--demo", action="store_true")
     ap.add_argument("--sensor-side", type=int, default=11)
     ap.add_argument("--px", type=int, default=64)

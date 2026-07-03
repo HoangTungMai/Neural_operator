@@ -7,9 +7,11 @@ numbers are produced on the corrected-BC realistic **IPC/UIPC** thin-gel dataset
 `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz`
 
 The headline benchmark is **not** `operator/field2field.py`. It is
-`operator/fem_benchmark.py`, which imports the shared model definitions but loads
-the IPC/UIPC `.npz` directly and reports the paper metrics (for example FNO
-`0.074 / 1.6 deg` and `7.35x` over the per-point MLP).
+`operator/fem_benchmark.py` run with `--field-model lr_fno`, which loads the
+IPC/UIPC `.npz` directly and reports the paper metrics (for example LR-FNO
+`0.060 / 1.5 deg` and `9.0x` over the per-point MLP). The main reported model is
+**LR-FNO** (`operator/hybrid_fno.py`: FNO trunk + lightweight local refinement,
+U-FNO family, Wen et al. 2022); the plain FNO trunk is kept as an ablation.
 
 `operator/field2field.py` is retained as an analytic Hertz--Mindlin
 proof-of-concept of the same field-to-field framing. It should not be used to
@@ -24,19 +26,22 @@ reports in `docs/` may describe superseded soft-BC or pre-reground runs.
 |---|---|
 | Ground truth | `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz` |
 | Acceptance checker | `infra/verify_bc_reground.py` |
-| Full downstream rerun | `infra/run_bc_downstream.sh` |
+| Full downstream rerun | `infra/run_bc_downstream.sh` (plain FNO) / `infra/run_lrfno_downstream.sh` (LR-FNO, current) |
 | RQ1/RQ2/RQ3 | `runs/phase3_fem/benchmark.json` |
 | Baseline bakeoff | `runs/phase3_fem/vbts_baselines.json` |
+| 5-seed architecture benchmark | `runs/phase3_fem/hybrid_multiseed.json` |
 | Control | `runs/phase4/policy_servo.json` |
 | Sensor build / inverse | `runs/phase5/sensor_build.json`, `runs/phase5/sensor_inverse_multiframe.json` |
 | Environment demo | `runs/phase6/env_demo.json` |
 | Paper | `docs/kse2026/main.tex`, `docs/kse2026/main.pdf` |
 
-Current headline numbers are FNO `rel-L2=0.074`, per-point MLP `rel-L2=0.545`
-(`7.35x` ratio), single-solve IPC/UIPC speedup `41,253x`, and adaptive raw
-`K=5` corrected-BC targets. Superseded soft-BC numbers such as `rel-L2=0.041`,
-`12.14x`, `82,827x`, or `K=3` are retained only as provenance for the older
-lineage.
+Current headline numbers are LR-FNO `rel-L2=0.060` (5-seed `0.0590±0.0014`,
+paired t=4.72 vs the plain FNO trunk), per-point MLP `rel-L2=0.545` (`9.0x`
+ratio), single-solve IPC/UIPC speedup `29,182x`, and adaptive raw `K=5`
+corrected-BC targets. Prior-lineage numbers (plain-FNO main-model era
+`rel-L2=0.074`/`7.35x`/`41,253x`; soft-BC `rel-L2=0.041`/`12.14x`/`82,827x`/`K=3`)
+are retained only as provenance — plain-FNO downstream artifacts are backed up
+as `*.FNO_MAIN.*`.
 
 ## Layout
 
@@ -51,7 +56,8 @@ src/novbts/
     isaac_extract_shear.py    PhysX-FEM GT, shear/slip          (runs in Docker)
     tacex_uipc_extract_shear.py IPC/UIPC thin-gel shear generator (TacEx-style)
   operator/
-    fem_benchmark.py     PAPER HEADLINE benchmark on realistic IPC/UIPC .npz
+    fem_benchmark.py     PAPER HEADLINE benchmark on realistic IPC/UIPC .npz (--field-model lr_fno)
+    hybrid_fno.py        LR-FNO (main model) / U-FNO-style defs + 5-seed multi-model benchmark
     vbts_baselines.py    VBTS/classical/neural baseline bakeoff on IPC/UIPC GT
     field2field.py       analytic field→field PoC (Hertz--Mindlin, not paper headline)
     param2field.py       param→field framing (ablation) + slip heads
@@ -82,9 +88,10 @@ Paths resolve from the repo root via `novbts.paths`, so modules run from any CWD
 ## Run (no Isaac needed)
 
 ```bash
-python -m novbts.operator.fem_benchmark \
+python -m novbts.operator.fem_benchmark --field-model lr_fno \
   --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
                                                 # paper headline RQ1/RQ2/RQ3 on IPC/UIPC GT
+python -m novbts.operator.hybrid_fno            # 5-seed FNO/U-Net/LR-FNO/U-FNO benchmark
 python -m novbts.operator.vbts_baselines \
   --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
                                                 # paper baseline bakeoff on same IPC/UIPC split

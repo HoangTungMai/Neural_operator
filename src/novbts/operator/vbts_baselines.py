@@ -207,6 +207,7 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--ksize", type=int, default=31)
     args = ap.parse_args()
+    from novbts.operator.hybrid_fno import LocalRefinedFNO
 
     D = load(args.data)
     side, N, nt = D["side"], D["inp"].shape[0], args.n_test
@@ -247,6 +248,8 @@ def main():
          "per-point MLP: learned but local (lower bound)"),
         ("fno_ours", lambda: FNOField(modes=args.modes), False,
          "ours: non-local spectral neural operator"),
+        ("lr_fno_ours", lambda: LocalRefinedFNO(modes=args.modes), False,
+         "ours (main): FNO trunk + lightweight local refinement (U-FNO family, Wen et al. 2022)"),
     ]
 
     # newer / more advanced neural architectures (is FNO still best among modern nets?)

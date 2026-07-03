@@ -90,6 +90,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"])
     ap.add_argument("--px", type=int, default=160)
     ap.add_argument("--sensor-marker-side", type=int, default=11,
                     help="visible tracking-marker side; the underlying FEM/FNO field stays dense")
@@ -143,7 +144,8 @@ def main():
         np.linspace(-1, 1, side), np.linspace(-1, 1, side), indexing="ij")[::-1], -1
     ).astype(np.float32)).to(DEV)
     torch.manual_seed(0)
-    fno = FNOField(modes=args.modes).to(DEV)
+    from novbts.operator.hybrid_fno import make_field_model
+    fno = make_field_model(args.field_model, modes=args.modes).to(DEV)
     secs, _ = train_operator(fno, nin(inp[tr]), nout(out[tr]), nsc(scal[tr]), mode[tr], cg, args.epochs, args.lr)
     fno_params = count_parameters(fno)
     fno.eval()

@@ -81,7 +81,9 @@ class Setup:
         ).astype(np.float32)).to(DEV)
         print(f"device={DEV}  phase4  data={args.data}  N={self.N} side={self.side}")
         torch.manual_seed(0)
-        self.fno = FNOField(modes=args.modes).to(DEV)
+        from novbts.operator.hybrid_fno import make_field_model
+        self.field_model = getattr(args, "field_model", "fno")
+        self.fno = make_field_model(self.field_model, modes=args.modes).to(DEV)
         secs, _ = train_operator(self.fno, self.nin(inp[self.tr]), self.nout(out[self.tr]),
                                  self.nsc(scal[self.tr]), mode[self.tr], self.cg,
                                  args.epochs, args.lr)
@@ -517,6 +519,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"])
     ap.add_argument("--probe", action="store_true")
     ap.add_argument("--sweep-n", type=int, default=12)
     ap.add_argument("--train-policy", action="store_true")

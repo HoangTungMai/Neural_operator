@@ -34,19 +34,22 @@ contact through the deformation of a soft, marker-printed gel. Simulating them
 faithfully requires solving frictional elastic contact, which is expensive,
 non-differentiable, and ill-suited to closed-loop control. We learn a
 \emph{Fourier neural operator} (FNO) that maps a contact field to the
-surface marker-displacement field, and use it as a differentiable,
+surface marker-displacement field---augmented with a lightweight local
+refinement head (LR-FNO, an adaptation of the U-FNO family)---and use it as a
+differentiable,
 FEM-fidelity, hardware-light surrogate for the contact solver. Trained on and
 benchmarked against finite-element IPC/GIPC frictional-contact physics generated
 with libuipc in a TacEx-style setup, the surrogate yields three results.
 (i)~\emph{Field-to-field framing
 is the key}: because surface displacement is a \emph{non-local} (Green's-function)
 response, an operator that learns global spectral convolutions beats a local
-per-point MLP by $7.35\times$ and the analytic and learned VBTS baselines by
-$4.1$--$11.2\times$ on the same IPC ground truth.
+per-point MLP by $9.1\times$ and the analytic and learned VBTS baselines by
+$5.0$--$13.8\times$ on the same IPC ground truth; adding local refinement to the
+spectral trunk improves it by a further $24\%$, consistently across five seeds.
 (ii)~\emph{Differentiability buys
 sample-efficient control}: learning a goal-conditioned policy by backpropagation
-through the frozen operator reaches the target with $77\times$ fewer model queries,
-runs $23.8\times$ faster, and reaches lower final loss than a gradient-free
+through the frozen operator reaches the target with $72\times$ fewer model queries,
+runs $24\times$ faster, and reaches lower final loss than a gradient-free
 baseline. (iii)~\emph{The sensor pipeline is autograd-connected}: a torch
 marker-dot renderer composes with the operator so that applied shear can be
 optimized from the rendered tactile image alone. We close with an honest account of scope: averaged
@@ -92,14 +95,17 @@ control loop. Our contributions are:
 We show that posing the problem as \emph{field$\to$field} (not per-point
 regression) is decisive: surface displacement is a non-local Green's-function
 response, so a global spectral operator beats a local MLP by
-$7.35\times$, and
+$9.1\times$, and
 beats reimplemented TACTO-, Taxim/FOTS-, and Cattaneo--Mindlin-style baselines by
-$4.1$--$11.2\times$, all measured on the \emph{same} IPC ground truth
-(Sec.~\ref{sec:exp-accuracy}).
+$5.0$--$13.8\times$, all measured on the \emph{same} IPC ground truth
+(Sec.~\ref{sec:exp-accuracy}). Adding a lightweight local refinement to the
+spectral trunk (LR-FNO, adapting the U-FNO family~\cite{wen2022ufno}) improves
+the trunk by a further $24\%$ on every one of five seeds (paired $t{=}4.7$)
+at $+3.3\%$ parameters.
 \item \textbf{Differentiable control through a frozen operator.}
 Backpropagating a goal-conditioned policy through the frozen surrogate reaches a
-tactile target with $77\times$ fewer target-reaching model queries and
-$23.8\times$ less wall-clock than evolution strategies, while also reaching lower final loss
+tactile target with $72\times$ fewer target-reaching model queries and
+$24\times$ less wall-clock than evolution strategies, while also reaching lower final loss
 (Sec.~\ref{sec:exp-control}). We find the often-reported pathology of
 differentiable simulators~\cite{suh2022diffsim} does \emph{not} bite here, and
 explain why.
@@ -129,8 +135,11 @@ millisecond-latency, differentiable approximation of one frozen solver.
 FNO~\cite{li2021fno} and DeepONet~\cite{lu2021deeponet} learn maps between function
 spaces and have become standard surrogates for PDE solution
 operators~\cite{kovachki2023neuraloperator}. Attention-based operators such as the
-Galerkin Transformer~\cite{cao2021galerkin} extend this family. We bring operator
-learning to tactile contact and, crucially, exploit its non-locality and
+Galerkin Transformer~\cite{cao2021galerkin} extend this family, and
+global--local hybrids such as U-FNO~\cite{wen2022ufno} augment Fourier layers
+with local convolutional paths. We bring operator
+learning to tactile contact, adapt the global--local family to it, and,
+crucially, exploit its non-locality and
 differentiability rather than only its accuracy.
 
 \textbf{Differentiable simulation for control.}
@@ -234,6 +243,16 @@ can fit the easy param$\to$field direction but \emph{collapses} on field$\to$fie
 ($\relL=0.545$, $42^\circ$ direction error), whereas the FNO holds. The operator
 framing is therefore not a modelling convenience but the source of the result.
 
+\textbf{Locally-refined variant (main model).} Our reported surrogate augments
+the spectral trunk with a lightweight local path: a two-layer convolutional stem
+added to the lifting layer, and a small refinement head that reads the trunk
+output, the local features, and the raw input. This adapts the global--local
+U-FNO family~\cite{wen2022ufno} to tactile fields---we adapt and evaluate, not
+propose, the architecture. The variant adds only $3.3\%$ parameters and is
+selected by a five-seed paired benchmark (Sec.~\ref{sec:exp-accuracy}), not by
+single-seed peak accuracy; we refer to it as \emph{LR-FNO} and keep the plain
+FNO trunk as an ablation.
+
 We add two lightweight classification heads that predict the contact mode, trained
 multitask with the regression objective.
 
@@ -270,9 +289,9 @@ wall-clock. Reported control numbers are means over three seeds.
 Table~\ref{tab:bakeoff} reports an in-house bake-off: we reimplement the
 \emph{marker-motion core} of representative VBTS simulators and fit each on our FEM
 ground truth (cross-paper numbers are not comparable, since methods target
-different sensor outputs). The operator attains $\relL=0.074$ and a
-$1.6^\circ$ tangential direction error, beating every classical and analytic
-baseline by $4.1$--$11.2\times$. Two readings stand out. First, first-principles
+different sensor outputs). The operator attains $\relL=0.060$ and a
+$1.5^\circ$ tangential direction error, beating every classical and analytic
+baseline by $5.0$--$13.8\times$. Two readings stand out. First, first-principles
 Cattaneo--Mindlin physics, even after affine calibration, \emph{loses} to a
 data-fit linear model: affine scaling cannot change the \emph{shape} of the profile
 where the real field departs from the idealised analytic one. Second, the
@@ -281,13 +300,46 @@ operator, because the stick$\to$partial$\to$full-slip transition is
 \emph{non-linear}. The operator's gain is thus non-linear \emph{and} non-local.
 
 Against modern dense/operator architectures, U-Net~\cite{ronneberger2015unet} is
-closest at $0.085$ ($1.15\times$ behind FNO), followed by DeepONet at
+closest at $0.085$ ($1.42\times$ behind LR-FNO), followed by DeepONet at
 $0.115$ and the Galerkin Transformer at $0.151$. The defensible message is
 \emph{``dense, non-local operator learning beats physics-based and linear tactile
-models, and the spectral FNO is strongest in this bakeoff.''}
-Per regime, the operator remains accurate from normal ($0.069$) through full slip
-($0.093$), with stick and partial slip at $0.070$ and $0.069$, respectively.
-The multitask slip head reaches macro-F1 $0.937$ (binary slip-F1 $0.975$).
+models, and the locally-refined spectral operator is strongest in this bakeoff.''}
+Per regime, the operator remains accurate from normal ($0.046$) through full slip
+($0.086$), with stick and partial slip at $0.052$ and $0.061$, respectively.
+The multitask slip head reaches macro-F1 $0.931$ (binary slip-F1 $0.969$).
+
+\textbf{Seed robustness and the local-refinement ablation.}
+Single-seed rankings in this accuracy regime are fragile, so we validate the
+architecture choice with five seeds under paired per-seed comparison
+(Table~\ref{tab:multiseed}). The plain FNO trunk's advantage over U-Net is
+\emph{not} seed-robust on its own (paired $t{=}2.16$; one seed reverses the
+ranking). Local refinement resolves this: LR-FNO improves on the trunk on
+\emph{every} seed (mean $0.0590\pm0.0014$, paired $t{=}4.72$), is ${\sim}6\times$
+more seed-stable, and its gap to U-Net is ${\sim}4$ standard deviations. A
+heavier full U-FNO-style hybrid ($5.26$M params) reaches the best single-seed
+error but does not survive multi-seed validation ($0.0634\pm0.0113$,
+$t{=}1.85$)---capacity without stability. We therefore select LR-FNO by
+accuracy/complexity trade-off and seed stability, not by seed-0 peak.
+
+\begin{table}[t]
+\centering
+\caption{Five-seed field accuracy (mean$\pm$std over seeds $0$--$4$, same
+split/budget as Table~\ref{tab:bakeoff}). Paired $t$ is per-seed vs.\ the FNO
+trunk; positive favours the row model.}
+\label{tab:multiseed}
+\setlength{\tabcolsep}{3.5pt}
+\footnotesize
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Model & $\relL$ & dir.\ ($^\circ$) & fps & paired $t$ \\
+\midrule
+U-Net & $0.0890\pm0.0067$ & $2.38$ & $19{,}422$ & $-2.16$ \\
+FNO trunk & $0.0780\pm0.0081$ & $1.83$ & $7{,}996$ & --- \\
+U-FNO-style~\cite{wen2022ufno} & $0.0634\pm0.0113$ & $1.63$ & $4{,}784$ & $+1.85$ \\
+\textbf{LR-FNO (ours)} & $\mathbf{0.0590\pm0.0014}$ & $\mathbf{1.50}$ & $5{,}676$ & $+4.72$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \begin{table}[t]
 \centering
@@ -301,31 +353,33 @@ same $2120$/$400$ split. Lower $\relL$ and direction error are better.}
 Method & $\relL$ & dir.\ ($^\circ$) & params & adv.\ $\times$ \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{VBTS-simulator marker cores}}\\
-TACTO-style (kinematic) & 0.656 & 69.6 & 3 & 8.85 \\
-Cattaneo--Mindlin (analytic) & 0.830 & 75.2 & 6 & 11.19 \\
-Taxim/FOTS-style (linear) & 0.302 & 9.3 & 14.4k & 4.07 \\
-MLP per-point (local) & 0.545 & 41.9 & 134k & 7.35 \\
+TACTO-style (kinematic) & 0.656 & 69.6 & 3 & 10.90 \\
+Cattaneo--Mindlin (analytic) & 0.830 & 75.2 & 6 & 13.78 \\
+Taxim/FOTS-style (linear) & 0.302 & 9.3 & 14.4k & 5.01 \\
+MLP per-point (local) & 0.545 & 41.9 & 134k & 9.06 \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{Modern dense / operator nets}}\\
-DeepONet & 0.115 & 3.2 & 1.05M & 1.55 \\
-Galerkin Transformer & 0.151 & 4.1 & 0.30M & 2.04 \\
-U-Net & 0.085 & 2.2 & 0.47M & 1.15 \\
-\textbf{FNO (ours)} & \textbf{0.074} & \textbf{1.6} & 2.67M & --- \\
+DeepONet & 0.115 & 3.2 & 1.05M & 1.91 \\
+Galerkin Transformer & 0.151 & 4.1 & 0.30M & 2.52 \\
+U-Net & 0.085 & 2.2 & 0.47M & 1.42 \\
+FNO trunk (ablation) & 0.074 & 1.6 & 2.67M & 1.23 \\
+\textbf{LR-FNO (ours)} & \textbf{0.060} & \textbf{1.5} & 2.76M & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{RQ2: Generalization}\label{sec:exp-gen}
 Extrapolating to the held-out upper tail of each physical parameter degrades the
-operator by $2.60\times$ for radius, $1.95\times$ for friction, and $1.36\times$
-for stiffness, indicating a smooth but radius-sensitive in-envelope response.
+operator by $2.10\times$ for radius, $1.63\times$ for friction, and $1.32\times$
+for stiffness, indicating a smooth but radius-sensitive in-envelope response
+(each milder than the plain trunk's $2.60$/$1.95$/$1.36\times$).
 We do not claim shape extrapolation here: all production frames use spherical
 indenters, and non-spherical objects remain future work.
 
 \subsection{RQ3: Speed}\label{sec:exp-speed}
-The operator runs at $\sim$$7920$ frames/s ($\sim$$0.13$\,ms latency) versus
+The operator runs at $\sim$$5600$ frames/s ($\sim$$0.18$\,ms latency) versus
 $0.192$\,frames/s for a fair single IPC/GIPC solve---a
-$\sim$$41{,}253\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). The production
+$\sim$$29{,}182\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). The production
 target robust-averages up to $K{=}5$ repeated solves, whose effective rate is
 $0.038$\,frames/s; the speedup figure reports the single-solve rate for fairness.
 We are careful here (Sec.~\ref{sec:limits}):
@@ -336,7 +390,7 @@ cheap differentiability, light hardware, and mesh-freedom---not raw fps.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.92\columnwidth]{figs/fidelity_speed.png}
-\caption{Fidelity versus speed. FNO and its multitask variant keep low field
+\caption{Fidelity versus speed. LR-FNO and its multitask variant keep low field
 error while moving from second-scale IPC/GIPC solves to sub-millisecond operator
 inference. The dashed line is a fair single-solve reference; the dotted line is
 the robust-averaged $K{\le}5$ production target.}
@@ -347,12 +401,12 @@ the robust-averaged $K{\le}5$ production target.}
 We train the goal-conditioned servo policy two ways
 (Table~\ref{tab:control}, Fig.~\ref{fig:control}). Autograd through the frozen
 operator and black-box ES are evaluated on the same IPC dataset. Autograd reaches
-a final loss of $1.99\times10^{-10}$ against ES's $2.24\times10^{-10}$, while using
+a final loss of $1.94\times10^{-10}$ against ES's $2.19\times10^{-10}$, while using
 $\mathbf{300}$ forward evaluations against ES's $\mathbf{19{,}200}$ ($64\times$
-smaller evaluation budget) and finishing in $\mathbf{13.13}$\,s versus
-$\mathbf{312.05}$\,s ($23.8\times$ faster). It first reaches the target after
-$81$ queries versus $6251$ for ES ($77\times$ fewer). Both sit above a
-per-instance oracle ($9.64\times10^{-12}$), the expected price of a single
+smaller evaluation budget) and finishing in $\mathbf{18.24}$\,s versus
+$\mathbf{438.02}$\,s ($24\times$ faster). It first reaches the target after
+$81$ queries versus $5824$ for ES ($72\times$ fewer). Both sit above a
+per-instance oracle ($8.06\times10^{-12}$), the expected price of a single
 amortized network serving
 all contexts.
 
@@ -373,10 +427,10 @@ gradient-free ES (mean over 3 seeds). Lower loss and far fewer queries.}
 \toprule
  & final loss & fwd queries & wall (s) \\
 \midrule
-autograd (ours) & $1.99\times10^{-10}$ & \textbf{300} & \textbf{13.13} \\
-ES (pop 32) & $2.24\times10^{-10}$ & 19{,}200 & 312.05 \\
+autograd (ours) & $1.94\times10^{-10}$ & \textbf{300} & \textbf{18.24} \\
+ES (pop 32) & $2.19\times10^{-10}$ & 19{,}200 & 438.02 \\
 \midrule
-per-instance oracle & $9.64\times10^{-12}$ & --- & --- \\
+per-instance oracle & $8.06\times10^{-12}$ & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -385,7 +439,7 @@ per-instance oracle & $9.64\times10^{-12}$ & --- & --- \\
 \centering
 \includegraphics[width=0.92\columnwidth]{figs/policy_servo_curve.png}
 \caption{Control convergence vs.\ model queries (log scale). Autograd reaches the
-target $77\times$ earlier in query count.}
+target $72\times$ earlier in query count.}
 \label{fig:control}
 \end{figure}
 
@@ -399,15 +453,18 @@ round trip recovers marker centroids to $0.14$\,px in stick, $0.26$\,px in parti
 slip, and $0.39$\,px in full slip at $160$\,px resolution
 (Fig.~\ref{fig:sensor}). Composing the renderer with the operator, gradient
 descent on the rendered \emph{image} recovers applied shear over 20 frames with
-$12.6\%$ mean magnitude error and $3.4^\circ$ mean direction error; both are
-hardest in normal frames because the applied shear magnitude is near zero.
+$11.8\%$ mean magnitude error and $4.8^\circ$ mean direction error; in the three
+shear regimes the direction error is at most $1.1^\circ$ (stick $1.1^\circ$,
+partial $0.9^\circ$, full slip $0.4^\circ$), and both metrics are hardest in
+normal frames, where the applied shear magnitude is near zero and direction
+becomes ill-defined.
 Finally, wrapping the frozen operator, the sensor, camera noise, and a reward into a
 single differentiable environment, the Sec.~\ref{sec:exp-control} policy closes
 $99.8\%$ of the random-to-oracle reward gap. Autograd gradients flow to the
 action through the full image pipeline. A finite-difference diagnostic on the
-current noisy image-reward environment has $7.31\%$ relative error and is therefore
-used only as a gradient-flow sanity check, not as formal gradient verification or
-evidence for multi-step contact dynamics.
+current noisy image-reward environment has $4.96\%$ relative error---within the
+$5\%$ tolerance---but we still use it only as a gradient-flow sanity check, not as
+formal gradient verification or evidence for multi-step contact dynamics.
 
 \begin{figure}[t]
 \centering
@@ -439,8 +496,8 @@ modern batched GPU physics; the practical advantage is low latency,
 differentiability, and light deployment.
 
 \section{Conclusion}\label{sec:conclusion}
-We presented a Fourier neural-operator surrogate for vision-based tactile sensing
-that is FEM-fidelity, differentiable, and hardware-light. The field-to-field framing
+We presented a locally-refined Fourier neural-operator surrogate for vision-based
+tactile sensing that is FEM-fidelity, differentiable, and hardware-light. The field-to-field framing
 exploits the non-locality of elastic contact and beats classical and analytic
 tactile models on real physics; its differentiability buys an order-of-magnitude
 gain in control sample efficiency; and a torch renderer provides an

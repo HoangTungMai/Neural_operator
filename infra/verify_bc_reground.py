@@ -154,15 +154,19 @@ PAPER_FIGS = (
     "docs/kse2026/figs/policy_servo_curve.png",
     "docs/kse2026/figs/sensor_gt_vs_fno.png",
 )
-# Claims that must appear in main.tex after the corrected-BC reground.
+# Claims that must appear in main.tex after the LR-FNO main-model switch
+# (runs/phase3_fem/hybrid_multiseed.json + corrected-BC downstream rerun).
 PAPER_REQUIRED = (
-    "$7.35\\times$", "$4.1$--$11.2\\times$", "$77\\times$", "$23.8\\times$",
-    "$\\relL=0.074$", "$41{,}253\\times$", "K{=}5",
+    "$9.1\\times$", "$5.0$--$13.8\\times$", "$72\\times$", "$24\\times$",
+    "$\\relL=0.060$", "$29{,}182\\times$", "K{=}5",
+    "0.0590\\pm0.0014", "wen2022ufno",
 )
-# Stale soft-BC-era claims that must no longer appear anywhere.
+# Stale soft-BC-era and pre-LR-FNO claims that must no longer appear anywhere.
 PAPER_FORBIDDEN = (
     "12.14", "12.63", "82{,}827", "82,827", "5.54", "$84\\times$",
     "0.041$", "7803", "317.75", "K{=}3", "$15.5\\%$",
+    "$7.35\\times$", "$4.1$--$11.2\\times$", "$77\\times$", "$23.8\\times$",
+    "$\\relL=0.074$", "$41{,}253\\times$",
 )
 
 

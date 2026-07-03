@@ -35,8 +35,8 @@ def fig_fidelity_speed() -> None:
     # (name, fps, rel-L2, colour, label offset in points, ha)
     pts = [
         ("MLP", fps["mlp"], rl2("mlp"), "tab:blue", (-10, 6), "right"),
-        ("FNO", fps["fno"], rl2("fno"), "tab:orange", (10, -14), "left"),
-        ("FNO+slip(a)", fps["fno_mt_a"], rl2("fno_mt_a"), "tab:green", (-10, 8), "right"),
+        ("LR-FNO", fps["fno"], rl2("fno"), "tab:orange", (10, -14), "left"),
+        ("LR-FNO+slip(a)", fps["fno_mt_a"], rl2("fno_mt_a"), "tab:green", (-10, 8), "right"),
     ]
     solver_fps = fps.get("gt_solver", fps["physx_fem_shear_solver"])
     solver_avg_fps = fps.get("gt_solver_averaged", fps.get("gt_solver_k3_averaged"))

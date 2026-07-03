@@ -115,7 +115,11 @@ def main():
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--lambda-cls", type=float, default=0.1)
+    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"],
+                    help="main field->field surrogate (lr_fno = LocalRefinedFNO)")
     args = ap.parse_args()
+    # local import: hybrid_fno imports load/norm_from from this module
+    from novbts.operator.hybrid_fno import make_field_model
 
     D = load(args.data)
     side, N, nt = D["side"], D["inp"].shape[0], args.n_test
@@ -143,10 +147,10 @@ def main():
             m = PerPointMLP().to(DEV)
             s, v = train_operator(m, nin(tri), nout(tro), nsc(trs), trm, cg, args.epochs, args.lr, is_mlp=True)
         elif kind == "fno":
-            m = FNOField(modes=args.modes).to(DEV)
+            m = make_field_model(args.field_model, modes=args.modes).to(DEV)
             s, v = train_operator(m, nin(tri), nout(tro), nsc(trs), trm, cg, args.epochs, args.lr)
         elif kind == "fno_mt":
-            m = FNOField(modes=args.modes, with_slip_head=True).to(DEV)
+            m = make_field_model(args.field_model, modes=args.modes, with_slip_head=True).to(DEV)
             s, v = train_operator(m, nin(tri), nout(tro), nsc(trs), trm, cg, args.epochs, args.lr,
                                   multitask=True, lambda_cls=args.lambda_cls)
         return m, s
@@ -162,7 +166,7 @@ def main():
     summary = {"gt": os.path.basename(args.data), "gt_path": args.data,
                "gt_provenance": {k: (v.tolist() if hasattr(v, "tolist") else v)
                                  for k, v in D["provenance"].items()},
-               "device": str(DEV),
+               "device": str(DEV), "field_model": args.field_model,
                "train_frames": int(N - nt), "test_frames": nt, "side": side,
                "param_box": param_box(D["params"]),
                "models": {}, "RQ1": {}, "RQ2": {}, "RQ3": {}}
@@ -200,7 +204,7 @@ def main():
         i2, o2, s2, m2 = slice_(tr2)
         im2, istd2, om2, ostd2, sm2, sstd2 = norm_from(i2, o2, s2)
         torch.manual_seed(0)
-        f2 = FNOField(modes=args.modes).to(DEV)
+        f2 = make_field_model(args.field_model, modes=args.modes).to(DEV)
         train_operator(f2, (i2 - im2) / istd2, (o2 - om2) / ostd2, (s2 - sm2) / sstd2, m2, cg, args.epochs, args.lr)
 
         def l2_on(idx_np):
