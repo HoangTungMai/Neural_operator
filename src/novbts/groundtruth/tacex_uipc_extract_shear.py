@@ -92,6 +92,13 @@ parser.add_argument("--drive-ratio", type=float, default=None,
 parser.add_argument("--gel-xy", type=float, default=0.10, help="gel footprint x=y (m)")
 parser.add_argument("--gel-z", type=float, default=0.04, help="gel thickness (m)")
 parser.add_argument("--indentor-r", type=float, default=0.02, help="sphere indentor radius (m)")
+parser.add_argument("--indentor-geom", choices=["sphere", "cylinder", "cuboid", "ellipsoid", "mesh"],
+                    default="sphere", help="indentor contact geometry")
+parser.add_argument("--indentor-half-z", type=float, default=-1.0,
+                    help="indentor half-height / z semi-axis (m); default = --indentor-r")
+parser.add_argument("--indentor-r2", type=float, default=-1.0,
+                    help="ellipsoid y semi-axis (m); default = --indentor-r")
+parser.add_argument("--indentor-mesh", default="", help="USD/OBJ mesh path for --indentor-geom mesh")
 parser.add_argument("--mu", type=float, default=0.6, help="friction coeff (-> default_friction_ratio)")
 parser.add_argument("--youngs", type=float, default=1.0e5, help="gel Young's modulus E (Pa)")
 parser.add_argument("--poisson", type=float, default=0.45, help="gel Poisson ratio")
@@ -200,7 +207,7 @@ GEL = (args.gel_xy, args.gel_xy, args.gel_z)
 GEL_TOP_Z = GEL[2]
 MODE_NAMES = ["normal", "stick", "partial_slip", "full_slip"]
 G_STICK, G_PARTIAL, G_FULL = 0.04, 0.48, 1.0
-GEOM_CODE = {"sphere": 0, "flat": 1, "cylinder": 2, "mesh": 3}
+GEOM_CODE = {"sphere": 0, "flat": 1, "cylinder": 2, "mesh": 3, "cuboid": 4, "ellipsoid": 5}
 LOAD_MODES = ["linear", "ortho", "reverse"]
 
 
@@ -260,6 +267,68 @@ def icosphere_surface(radius, subdiv=2, center=(0.0, 0.0, 0.0)):
     V = V / np.linalg.norm(V, axis=1, keepdims=True) * radius
     V = V + np.asarray(center, dtype=np.float64)
     return V, np.array(faces, dtype=np.uint32)
+
+
+def cylinder_surface(radius, half_z, n_theta=48, n_z=4, center=(0.0, 0.0, 0.0)):
+    """Closed Z-axis cylinder surface with deterministic vertex/face order."""
+    cx, cy, cz = np.asarray(center, dtype=np.float64)
+    theta = np.linspace(0.0, 2.0 * np.pi, int(n_theta), endpoint=False)
+    zvals = np.linspace(-half_z, half_z, int(n_z) + 1)
+    verts = []
+    for z in zvals:
+        for th in theta:
+            verts.append((cx + radius * np.cos(th), cy + radius * np.sin(th), cz + z))
+    bottom_ci = len(verts)
+    verts.append((cx, cy, cz - half_z))
+    top_ci = len(verts)
+    verts.append((cx, cy, cz + half_z))
+
+    faces = []
+    nt = int(n_theta)
+    for iz in range(int(n_z)):
+        row = iz * nt
+        nxt = (iz + 1) * nt
+        for i in range(nt):
+            j = (i + 1) % nt
+            faces.append((row + i, row + j, nxt + j))
+            faces.append((row + i, nxt + j, nxt + i))
+    for i in range(nt):
+        j = (i + 1) % nt
+        faces.append((bottom_ci, j, i))
+        top_row = int(n_z) * nt
+        faces.append((top_ci, top_row + i, top_row + j))
+    return np.asarray(verts, dtype=np.float64), np.asarray(faces, dtype=np.uint32)
+
+
+def cuboid_surface(half_x, half_y, half_z, center=(0.0, 0.0, 0.0)):
+    """Closed box surface. Tier-2 input support is added separately."""
+    cx, cy, cz = np.asarray(center, dtype=np.float64)
+    verts = np.array([
+        [cx - half_x, cy - half_y, cz - half_z],
+        [cx + half_x, cy - half_y, cz - half_z],
+        [cx + half_x, cy + half_y, cz - half_z],
+        [cx - half_x, cy + half_y, cz - half_z],
+        [cx - half_x, cy - half_y, cz + half_z],
+        [cx + half_x, cy - half_y, cz + half_z],
+        [cx + half_x, cy + half_y, cz + half_z],
+        [cx - half_x, cy + half_y, cz + half_z],
+    ], dtype=np.float64)
+    faces = np.array([
+        [0, 2, 1], [0, 3, 2],
+        [4, 5, 6], [4, 6, 7],
+        [0, 1, 5], [0, 5, 4],
+        [1, 2, 6], [1, 6, 5],
+        [2, 3, 7], [2, 7, 6],
+        [3, 0, 4], [3, 4, 7],
+    ], dtype=np.uint32)
+    return verts, faces
+
+
+def ellipsoid_surface(rx, ry, rz, subdiv=2, center=(0.0, 0.0, 0.0)):
+    """Icosphere scaled to an ellipsoid. Tier-3 input/schema support is separate."""
+    V, F = icosphere_surface(1.0, subdiv=subdiv, center=(0.0, 0.0, 0.0))
+    V = V * np.array([rx, ry, rz], dtype=np.float64) + np.asarray(center, dtype=np.float64)
+    return V, F
 
 
 def fan_tet_sphere(V, F, center):
@@ -461,6 +530,38 @@ def shear_xy():
     return float(args.shear_x), float(0.0 if args.shear_y is None else args.shear_y)
 
 
+def indentor_half_z():
+    return float(args.indentor_r if args.indentor_half_z <= 0 else args.indentor_half_z)
+
+
+def indentor_r2():
+    return float(args.indentor_r if args.indentor_r2 <= 0 else args.indentor_r2)
+
+
+def make_indentor_tetmesh(center):
+    """Return (tet_points, tet_indices, bottom_off) for the requested indentor."""
+    geom = args.indentor_geom
+    hz = indentor_half_z()
+    if geom == "sphere":
+        bottom_off = float(args.indentor_r)
+        V, F = icosphere_surface(args.indentor_r, subdiv=args.indentor_subdiv, center=center)
+    elif geom == "cylinder":
+        bottom_off = hz
+        V, F = cylinder_surface(args.indentor_r, hz, center=center)
+    elif geom == "cuboid":
+        bottom_off = hz
+        V, F = cuboid_surface(args.indentor_r, args.indentor_r, hz, center=center)
+    elif geom == "ellipsoid":
+        bottom_off = hz
+        V, F = ellipsoid_surface(args.indentor_r, indentor_r2(), hz,
+                                 subdiv=args.indentor_subdiv, center=center)
+    elif geom == "mesh":
+        raise SystemExit("--indentor-geom mesh is reserved for Tier 4 contact-profile input")
+    else:
+        raise SystemExit(f"unknown indentor geom {geom!r}")
+    return (*fan_tet_sphere(V, F, center), bottom_off)
+
+
 # ---------------------------------------------------------------------------
 # Scene construction
 # ---------------------------------------------------------------------------
@@ -503,14 +604,15 @@ def build_scene(uipc_sim, gel_res):
     gel_object = scene.objects().create("gel")
     gel_slot, _ = gel_object.geometries().create(gel_mesh)
 
-    # --- indentor (stiff SNH sphere, all vertices prescribed => kinematic) ---
-    # Indentor stays on wildmeshing: it is rigid+driven, so its interior tets are
-    # irrelevant and the contact surface is the deterministic icosphere; its mesh
-    # is regenerated each run but does not enter the gel-field convergence metric.
-    flog("  meshing indentor sphere (deterministic fan) ...")
-    c0 = (0.0, 0.0, GEL_TOP_Z + args.indentor_r + args.d_hat)
-    ind_V, ind_F = icosphere_surface(args.indentor_r, subdiv=args.indentor_subdiv, center=c0)
-    ind_pts, ind_tets = fan_tet_sphere(ind_V, ind_F, c0)
+    # --- indentor (stiff SNH, all vertices prescribed => kinematic) ----------
+    # Its interior tets are physically irrelevant; deterministic fan tets keep
+    # contact-surface noise out of geometry-OOD comparisons.
+    bottom_off0 = args.indentor_r if args.indentor_geom == "sphere" else indentor_half_z()
+    c0 = (0.0, 0.0, GEL_TOP_Z + bottom_off0 + args.d_hat)
+    flog(f"  meshing indentor {args.indentor_geom} (deterministic fan) ...")
+    ind_pts, ind_tets, bottom_off = make_indentor_tetmesh(c0)
+    if abs(bottom_off - bottom_off0) > 1e-12:
+        raise RuntimeError("indentor bottom offset changed after mesh creation")
     flog(f"  indentor tets: {ind_pts.shape[0]} verts, {ind_tets.shape[0]} tets")
     ind_mesh = to_uipc_mesh(ind_pts, ind_tets)
     ind_moduli = ElasticModuli.youngs_poisson(args.indentor_youngs, 0.45)
@@ -726,7 +828,7 @@ def save_field(out_dir, coords, field, scalars, traj=None):
     # params row layout matches isaac_extract_shear.py:
     # [cx, cy, depth, R, sx, sy, mu, youngs, geom_code]
     params = np.array([[0.0, 0.0, args.depth, args.indentor_r, sx, sy,
-                        args.mu, args.youngs, float(GEOM_CODE["sphere"])]], dtype=np.float32)
+                        args.mu, args.youngs, float(GEOM_CODE[args.indentor_geom])]], dtype=np.float32)
     # mode is the Cattaneo-Mindlin slip class. The PhysX sweep labels it from the
     # SAMPLED drive ratio g. For ad-hoc --single runs the shear is just a fixed
     # lateral TRAVEL in metres, so a faithful g is unavailable -> store -1. Scripted
@@ -751,7 +853,10 @@ def save_field(out_dir, coords, field, scalars, traj=None):
         marker_sampling=np.array([scalars.get("marker_sampling", "unknown")], dtype="U32"),
         load_mode=np.array([LOAD_MODES.index(scalars.get("load_mode", args.load_mode))], dtype=np.int32),
         load_mode_names=np.array(",".join(LOAD_MODES), dtype="U64"),
-        meta=np.array("gt=uipc_ipc_SHEAR; tacex_uipc; units=m; geom=sphere", dtype="U96"),
+        meta=np.array(
+            f"gt=uipc_ipc_SHEAR; tacex_uipc; units=m; geom={args.indentor_geom}",
+            dtype="U120",
+        ),
     )
     if traj is not None:
         payload["disp_traj"] = traj[None, ...].astype(np.float32)
