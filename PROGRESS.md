@@ -1606,3 +1606,25 @@ rtk grep "0.975|0.341|50\\\\times50|490/430|flat-punch" docs/kse2026 src runs
   - in-distribution rel-L2: 0.119
   - cylinder zero-shot 0.528 -> few-shot 0.404; scratch 0.979
   - sphere_oodR zero-shot 0.319 -> few-shot 0.207; scratch 0.992
+
+## 2026-07-04 geometry OOD Tier 2-3 checkpoint
+
+- Tier 2 cuboid PASS:
+  - commit `eb6b647 Add cuboid geometry OOD support`
+  - `data/uipc/geom_ood/cuboid/cuboid_avg.npz`: 150 frames, K=3, geom code 4, params 9 cols
+  - mean tangential `2.03e-4`
+  - quick eval: zero-shot 0.549 -> few-shot 0.447; scratch 0.936
+- Tier 3 ellipsoid PASS:
+  - commit `3f8e456 Add ellipsoid geometry OOD schema`
+  - schema extended to params 10 cols: `R2` at index 9; `geom_code` stays index 8
+  - backward-compat verified: old 9-col sphere input equals 10-col padded input exactly
+  - `data/uipc/geom_ood/ellipsoid/ellipsoid_avg.npz`: 150 frames, K=3, geom code 5, `R2/R=0.6`
+  - mean tangential `3.18e-5`
+  - quick eval: zero-shot 3.084 -> few-shot 2.324; scratch 1.004
+- Combined quick checkpoint after fair scratch normalization:
+  - in-distribution rel-L2: 0.118
+  - cylinder zero-shot 0.525 -> few-shot 0.402; scratch 0.970
+  - sphere_oodR zero-shot 0.318 -> few-shot 0.206; scratch 1.031
+  - cuboid zero-shot 0.549 -> few-shot 0.447; scratch 0.936
+  - ellipsoid zero-shot 3.084 -> few-shot 2.324; scratch 1.004
+- Stop point: Tier 4 mesh requires design checkpoint for analytic-free input/contact_profile before implementation.
