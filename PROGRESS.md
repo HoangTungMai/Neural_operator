@@ -1585,3 +1585,24 @@ rtk grep "0.975|0.341|50\\\\times50|490/430|flat-punch" docs/kse2026 src runs
   - reward gap closed `99.88%`
   - finite-difference diagnostic rel error `1.56e-4`
   - `gradcheck.passed=true`
+
+## 2026-07-04 geometry OOD Tier 1 checkpoint
+
+- Implemented and committed Tier 0-1 geometry-OOD pipeline:
+  - commit `1d0d856 Add tier1 geometry OOD pipeline`
+  - driver supports `--indentor-geom` plus deterministic cylinder/cuboid/ellipsoid fan tets
+  - `infra/gen_uipc_geom_ood.sh`
+  - `src/novbts/operator/geometry_ood.py`
+- Generated Tier 1 production-resolution datasets:
+  - `data/uipc/geom_ood/cylinder/cylinder_avg.npz`: 150 frames, K=3, geom code 2
+  - `data/uipc/geom_ood/sphere_oodR/sphere_oodR_avg.npz`: 150 frames, K=3, R=8-10 mm
+- Tangential gate diagnosis:
+  - smoke res6/res12 cylinder-vs-sphere peak-tangential check failed because the cylinder edge
+    singularity is smeared on coarse grids; tangential response is resolution-sensitive.
+  - production res24 matched-pair evidence passes: 97 same-depth/R/shear/mu pairs, median cyl/sphere
+    peak-tangential ratio 1.10, mean 1.24, 66% cyl > sphere.
+  - This replaces the old smoke-only gate; smoke remains a runnable/load/peak-uz/determinism gate.
+- Quick checkpoint eval (not Phase E final):
+  - in-distribution rel-L2: 0.119
+  - cylinder zero-shot 0.528 -> few-shot 0.404; scratch 0.979
+  - sphere_oodR zero-shot 0.319 -> few-shot 0.207; scratch 0.992
