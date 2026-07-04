@@ -1628,3 +1628,33 @@ rtk grep "0.975|0.341|50\\\\times50|490/430|flat-punch" docs/kse2026 src runs
   - cuboid zero-shot 0.549 -> few-shot 0.447; scratch 0.936
   - ellipsoid zero-shot 3.084 -> few-shot 2.324; scratch 1.004
 - Stop point: Tier 4 mesh requires design checkpoint for analytic-free input/contact_profile before implementation.
+
+## 2026-07-04 geometry OOD Phase E
+
+- Ran Phase E on the 4 completed non-mesh geometries (mesh remains Tier-4 design checkpoint):
+  - `data/uipc/geom_ood/cylinder/cylinder_avg.npz`
+  - `data/uipc/geom_ood/sphere_oodR/sphere_oodR_avg.npz`
+  - `data/uipc/geom_ood/cuboid/cuboid_avg.npz`
+  - `data/uipc/geom_ood/ellipsoid/ellipsoid_avg.npz`
+- Output artifacts:
+  - `runs/phase3_fem/geometry_ood_phaseE.json`
+  - `docs/kse2026/figs/geometry_ood.png`
+- Protocol:
+  - models: LR-FNO and FNO
+  - seeds: 0, 1, 2
+  - sphere baseline: 80 epochs, lr 1e-3, train/test split matches fem_benchmark
+  - few-shot: 50 OOD frames, 20 epochs, lr 1e-4, 100 held-out test frames
+  - scratch: same 50-frame/20-epoch budget with OOD-only normalization
+  - figure metric: tangential absolute RMSE in micrometres; rel-L2 retained in JSON/table fields
+- LR-FNO aggregate:
+  - in-distribution rel-L2: `0.0588 +/- 0.0016`; tangential RMSE `3.67 +/- 0.14 um`
+  - sphere_oodR: zero `17.8 um`, few `12.0 um`; rel-L2 zero/few/scratch `0.210/0.149/0.980`
+  - cylinder: zero `81.2 um`, few `60.2 um`; rel-L2 `0.448/0.317/0.920`
+  - cuboid: zero `101.7 um`, few `81.0 um`; rel-L2 `0.513/0.379/0.914`
+  - ellipsoid: zero `102.5 um`, few `41.4 um`; rel-L2 `2.360/1.032/0.967`
+- Required questions:
+  - Ellipsoid few-shot vs scratch: with 20 epochs/3 seeds, few-shot is better by tangential abs-RMSE
+    (`41.4 < 45.9 um`) but still slightly worse by rel-L2 (`1.032 > 0.967`) because ellipsoid target
+    norm is small; report both honestly.
+  - Few-shot improves every geometry versus zero-shot in tangential abs-RMSE and rel-L2, but does not
+    pull all shapes close to in-distribution; cuboid/cylinder remain shifted, ellipsoid remains rel-L2 high.
