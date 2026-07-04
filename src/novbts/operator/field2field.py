@@ -62,8 +62,10 @@ def params_to_fieldinput(params, coords, side):
 
     Penetration profile depends on geometry, so the flat-punch OOD split is a
     genuinely different input field shape the operator has not seen:
-      sphere (geom=0): pen = max(0, depth - r^2/(2R)),  contact radius = Hertz a
-      flat   (geom=1): pen = depth inside the punch,    contact radius = R
+      sphere  (geom=0): pen = max(0, depth - r^2/(2R)),  contact radius = Hertz a
+      flat    (geom=1): pen = depth inside circle,       contact radius = R
+      cylinder(geom=2): same circular flat footprint as flat
+      cuboid  (geom=4): pen = depth inside square,       half-side = R
     """
     p = np.asarray(params, dtype=np.float64)
     x0, y0, depth, R, sx, sy, mu, E, geom = [p[:, i] for i in range(9)]
@@ -75,13 +77,17 @@ def params_to_fieldinput(params, coords, side):
     r = np.sqrt(r2 + 1e-12)
 
     a, _, _, _ = hertz_scalars(depth, R, E)
-    is_flat = geom[:, None, None] > 0.5
+    is_round_flat = ((geom > 0.5) & (geom < 3.5))[:, None, None]
+    is_cuboid = (np.abs(geom - 4.0) < 0.5)[:, None, None]
     a_eff = np.where(geom > 0.5, R, a)[:, None, None]
 
     pen_sphere = np.clip(depth[:, None, None] - r2 / (2.0 * R[:, None, None]), 0.0, None)
     pen_flat = depth[:, None, None] * (r <= R[:, None, None])
-    pen = np.where(is_flat, pen_flat, pen_sphere)
-    mask = (r <= a_eff).astype(np.float64)
+    square = ((np.abs(dx) <= R[:, None, None]) & (np.abs(dy) <= R[:, None, None]))
+    pen_square = depth[:, None, None] * square
+    pen = np.where(is_cuboid, pen_square, np.where(is_round_flat, pen_flat, pen_sphere))
+    mask_round = r <= a_eff
+    mask = np.where(is_cuboid, square, mask_round).astype(np.float64)
 
     inp = np.zeros((p.shape[0], 3, side, side), np.float32)
     inp[:, 0] = pen

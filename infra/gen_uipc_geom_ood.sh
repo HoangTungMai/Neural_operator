@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Geometry-OOD UIPC sweep. Tier 1 supports:
+# Geometry-OOD UIPC sweep. Supports:
 #   cylinder    : flat circular punch, R sampled in the production sphere range
 #   sphere_oodR : sphere with R outside the production range (8/9/10 mm)
+#   cuboid      : square flat punch, half-side R in the production sphere range
 #
 # Usage:
 #   bash infra/gen_uipc_geom_ood.sh cylinder 6 25 3
 #   bash infra/gen_uipc_geom_ood.sh sphere_oodR 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh cuboid 6 25 3
 set -u
 cd "$(dirname "$0")/.."
 
@@ -30,8 +32,9 @@ TEST_SIZE="${TEST_SIZE:-100}"
 
 case "$GEOM_REQ" in
   cylinder) DRIVER_GEOM="cylinder" ;;
+  cuboid) DRIVER_GEOM="cuboid" ;;
   sphere_oodR) DRIVER_GEOM="sphere" ;;
-  *) echo "unsupported Tier-1 geometry: $GEOM_REQ (expected cylinder|sphere_oodR)" >&2; exit 2 ;;
+  *) echo "unsupported geometry: $GEOM_REQ (expected cylinder|sphere_oodR|cuboid)" >&2; exit 2 ;;
 esac
 
 # Pull the production gel/BC/IPC knobs from the checked GT file unless the caller
