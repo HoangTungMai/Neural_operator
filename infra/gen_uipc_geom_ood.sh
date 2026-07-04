@@ -3,11 +3,13 @@
 #   cylinder    : flat circular punch, R sampled in the production sphere range
 #   sphere_oodR : sphere with R outside the production range (8/9/10 mm)
 #   cuboid      : square flat punch, half-side R in the production sphere range
+#   ellipsoid   : anisotropic ellipsoid, rx=R, ry=0.6R, rz=R
 #
 # Usage:
 #   bash infra/gen_uipc_geom_ood.sh cylinder 6 25 3
 #   bash infra/gen_uipc_geom_ood.sh sphere_oodR 6 25 3
 #   bash infra/gen_uipc_geom_ood.sh cuboid 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh ellipsoid 6 25 3
 set -u
 cd "$(dirname "$0")/.."
 
@@ -33,8 +35,9 @@ TEST_SIZE="${TEST_SIZE:-100}"
 case "$GEOM_REQ" in
   cylinder) DRIVER_GEOM="cylinder" ;;
   cuboid) DRIVER_GEOM="cuboid" ;;
+  ellipsoid) DRIVER_GEOM="ellipsoid" ;;
   sphere_oodR) DRIVER_GEOM="sphere" ;;
-  *) echo "unsupported geometry: $GEOM_REQ (expected cylinder|sphere_oodR|cuboid)" >&2; exit 2 ;;
+  *) echo "unsupported geometry: $GEOM_REQ (expected cylinder|sphere_oodR|cuboid|ellipsoid)" >&2; exit 2 ;;
 esac
 
 # Pull the production gel/BC/IPC knobs from the checked GT file unless the caller
@@ -88,6 +91,7 @@ for ci in range(n):
         R = ood_r[ci % len(ood_r)]
     else:
         R = round(float(box.uniform(rmin, rmax)), 4)
+    R2 = 0.6 * R if geom == "ellipsoid" else R
     mu = round(float(box.uniform(0.40, 0.80)), 3)
     E = round(float(box.uniform(0.5e5, 2.0e5)), 0)
     rng = np.random.default_rng(4200 + ci)
@@ -100,23 +104,24 @@ for ci in range(n):
         rows.append(f"{fi} {depth:.10g} {g:.10g} {mag*np.cos(theta):.10g} {mag*np.sin(theta):.10g}")
     with open(os.path.join(rows_dir, f"combo_{ci:03d}.rows"), "w") as f:
         f.write("\n".join(rows) + "\n")
-    print(ci, f"{R:.8g}", f"{mu:.8g}", f"{E:.8g}", 4200 + ci)
+    print(ci, f"{R:.8g}", f"{R2:.8g}", f"{mu:.8g}", f"{E:.8g}", 4200 + ci)
 PYEOF
 
 echo "GEOM-OOD SWEEP: geom=$GEOM_REQ driver_geom=$DRIVER_GEOM combos=${START_COMBO}..${END_COMBO} frames=$FRAMES K=$KREPS out=$OUT_DATA log=$PROG"
 ok=0; failc=0
-while read -r CI R MU E SEED; do
+while read -r CI R R2 MU E SEED; do
   combo="combo_$(printf '%03d' "$CI")"
   cdir="$SWEEP_DIR/$combo"
   rows="$ROWS_DIR/$combo.rows"
   mkdir -p "$cdir"
-  echo "=== $combo: geom=$GEOM_REQ R=$R mu=$MU E=$E ==="
+  echo "=== $combo: geom=$GEOM_REQ R=$R R2=$R2 mu=$MU E=$E ==="
   cname="uipcgeom_${GEOM_REQ}_${CI}"
   docker rm -f "$cname" >/dev/null 2>&1
   timeout 7200 docker run --rm --name "$cname" --gpus all \
     -e ACCEPT_EULA=Y -e OMNI_KIT_ACCEPT_EULA=YES -e LIVESTREAM=0 -v "$PWD":/work \
     --entrypoint /isaac-sim/python.sh "$IMG" "$SCRIPT" $COMMON \
-    --indentor-r="$R" --indentor-half-z="$R" --mu="$MU" --youngs="$E" --seed="$SEED" \
+    --indentor-r="$R" --indentor-r2="$R2" --indentor-half-z="$R" \
+    --mu="$MU" --youngs="$E" --seed="$SEED" \
     --batch-rows="/work/$rows" --out="/work/$cdir"
   docker rm -f "$cname" >/dev/null 2>&1
 

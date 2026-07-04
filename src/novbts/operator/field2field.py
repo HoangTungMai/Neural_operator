@@ -58,7 +58,7 @@ FEM_SOLVER_FPS = 7.2
 # ---------------------------------------------------------------------------
 
 def params_to_fieldinput(params, coords, side):
-    """[N,9] params -> input field [N,3,H,W] + scalars [N,2] (mu,E).
+    """[N,9/10] params -> input field [N,3,H,W] + scalars [N,2] (mu,E).
 
     Penetration profile depends on geometry, so the flat-punch OOD split is a
     genuinely different input field shape the operator has not seen:
@@ -66,9 +66,13 @@ def params_to_fieldinput(params, coords, side):
       flat    (geom=1): pen = depth inside circle,       contact radius = R
       cylinder(geom=2): same circular flat footprint as flat
       cuboid  (geom=4): pen = depth inside square,       half-side = R
+      ellipsoid(geom=5): pen = depth inside ellipse,     semi-axes R, R2
     """
     p = np.asarray(params, dtype=np.float64)
+    if p.shape[1] < 9:
+        raise ValueError(f"params must have at least 9 columns, got {p.shape}")
     x0, y0, depth, R, sx, sy, mu, E, geom = [p[:, i] for i in range(9)]
+    R2 = p[:, 9] if p.shape[1] > 9 else R
     X = coords[:, 0].reshape(side, side)
     Y = coords[:, 1].reshape(side, side)
     dx = X[None] - x0[:, None, None]
@@ -79,15 +83,20 @@ def params_to_fieldinput(params, coords, side):
     a, _, _, _ = hertz_scalars(depth, R, E)
     is_round_flat = ((geom > 0.5) & (geom < 3.5))[:, None, None]
     is_cuboid = (np.abs(geom - 4.0) < 0.5)[:, None, None]
+    is_ellipsoid = (np.abs(geom - 5.0) < 0.5)[:, None, None]
     a_eff = np.where(geom > 0.5, R, a)[:, None, None]
 
     pen_sphere = np.clip(depth[:, None, None] - r2 / (2.0 * R[:, None, None]), 0.0, None)
     pen_flat = depth[:, None, None] * (r <= R[:, None, None])
     square = ((np.abs(dx) <= R[:, None, None]) & (np.abs(dy) <= R[:, None, None]))
     pen_square = depth[:, None, None] * square
-    pen = np.where(is_cuboid, pen_square, np.where(is_round_flat, pen_flat, pen_sphere))
+    ellipse = ((dx / np.maximum(R[:, None, None], 1e-12)) ** 2
+               + (dy / np.maximum(R2[:, None, None], 1e-12)) ** 2) <= 1.0
+    pen_ellipse = depth[:, None, None] * ellipse
+    pen = np.where(is_ellipsoid, pen_ellipse,
+                   np.where(is_cuboid, pen_square, np.where(is_round_flat, pen_flat, pen_sphere)))
     mask_round = r <= a_eff
-    mask = np.where(is_cuboid, square, mask_round).astype(np.float64)
+    mask = np.where(is_ellipsoid, ellipse, np.where(is_cuboid, square, mask_round)).astype(np.float64)
 
     inp = np.zeros((p.shape[0], 3, side, side), np.float32)
     inp[:, 0] = pen

@@ -46,7 +46,12 @@ def _provenance(path: str, data: dict) -> dict:
         "frames": int(params.shape[0]),
         "side": int(data["side"]),
         "geom_code_values": geom_vals,
+        "params_cols": int(params.shape[1]),
         "radius_m": [float(params[:, 3].min()), float(params[:, 3].max())],
+        "radius2_m": (
+            [float(params[:, 9].min()), float(params[:, 9].max())]
+            if params.shape[1] > 9 else None
+        ),
         "mu": [float(params[:, 6].min()), float(params[:, 6].max())],
         "E_Pa": [float(params[:, 7].min()), float(params[:, 7].max())],
         "meta": data["provenance"].get("meta", ""),
@@ -109,12 +114,14 @@ def adapt_geometry(model, flat_npz: str, norm, *, few_shot_n: int, test_n: int,
     tr = torch.arange(0, few_shot_n, device=DEV)
     te = torch.arange(n - test_n, n, device=DEV)
     inp, out, scal, mode = (data[k].to(DEV) for k in ("inp", "out", "scal", "mode"))
-    im, istd, om, ostd, sm, sstd = norm
     cg = _coord_grid(data["side"])
     if scratch:
         adapted = make_field_model(field_model, modes=modes).to(DEV)
+        train_norm = norm_from(inp[tr], out[tr], scal[tr])
     else:
         adapted = copy.deepcopy(model).to(DEV)
+        train_norm = norm
+    im, istd, om, ostd, sm, sstd = train_norm
     secs, vram = train_operator(
         adapted,
         (inp[tr] - im) / istd,
@@ -125,7 +132,7 @@ def adapt_geometry(model, flat_npz: str, norm, *, few_shot_n: int, test_n: int,
         epochs,
         lr,
     )
-    metrics = _eval_loaded(adapted, data, norm, te)
+    metrics = _eval_loaded(adapted, data, train_norm, te)
     metrics.update({
         "train_frames": int(few_shot_n),
         "test_frames": int(test_n),

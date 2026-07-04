@@ -825,10 +825,13 @@ def channel_rel_l2(field_a, field_b):
 def save_field(out_dir, coords, field, scalars, traj=None):
     os.makedirs(out_dir, exist_ok=True)
     sx, sy = shear_xy()
-    # params row layout matches isaac_extract_shear.py:
-    # [cx, cy, depth, R, sx, sy, mu, youngs, geom_code]
+    # params row layout extends isaac_extract_shear.py:
+    # [cx, cy, depth, R, sx, sy, mu, youngs, geom_code, R2]
+    # R2 defaults to R for backward-compatible geometries and is the y semi-axis
+    # for ellipsoid Tier-3 data.
     params = np.array([[0.0, 0.0, args.depth, args.indentor_r, sx, sy,
-                        args.mu, args.youngs, float(GEOM_CODE[args.indentor_geom])]], dtype=np.float32)
+                        args.mu, args.youngs, float(GEOM_CODE[args.indentor_geom]),
+                        indentor_r2()]], dtype=np.float32)
     # mode is the Cattaneo-Mindlin slip class. The PhysX sweep labels it from the
     # SAMPLED drive ratio g. For ad-hoc --single runs the shear is just a fixed
     # lateral TRAVEL in metres, so a faithful g is unavailable -> store -1. Scripted
