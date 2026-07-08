@@ -72,6 +72,24 @@ def _pen_for_object(kind: str, size: float, T_gel_obj: np.ndarray, grid: np.ndar
     raise ValueError(kind)
 
 
+def _support_extent_for_object(kind: str, size: float, normal_w, quat_wxyz=(1.0, 0.0, 0.0, 0.0)) -> float:
+    """Half extent of the rigid object along a world-space contact normal."""
+    n_w = np.asarray(normal_w, dtype=np.float64)
+    n_w = n_w / (np.linalg.norm(n_w) + 1.0e-12)
+    R_w_obj = pose_to_T((0.0, 0.0, 0.0), quat_wxyz)[:3, :3]
+    n_obj = R_w_obj.T @ n_w
+    half = float(size) / 2.0
+    if kind == "sphere":
+        return half
+    if kind == "cube":
+        return half * float(np.abs(n_obj).sum())
+    if kind == "cylinder":
+        radial = half * float(np.linalg.norm(n_obj[:2]))
+        axial = half * float(abs(n_obj[2]))
+        return radial + axial
+    raise ValueError(kind)
+
+
 def _quat_wxyz_from_R(R: np.ndarray) -> list[float]:
     tr = float(np.trace(R))
     if tr > 0.0:
@@ -576,15 +594,16 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
             origins = []
             normals = []
             desired_offsets = []
-            radius = args.object_size / 2.0
-            desired = radius - float(contact_depth)
             for side in ("left", "right"):
                 frame = frames.get(side)
                 if frame is None:
                     continue
                 T_w_gel = _T_from_gel_frame(frame)
+                normal = T_w_gel[:3, 2].copy()
+                support = _support_extent_for_object(args.object, args.object_size, normal)
+                desired = support - float(contact_depth)
                 origins.append(T_w_gel[:3, 3].copy())
-                normals.append(T_w_gel[:3, 2].copy())
+                normals.append(normal)
                 desired_offsets.append(desired)
             if len(origins) >= 2:
                 A = np.stack([n / (np.linalg.norm(n) + 1.0e-12) for n in normals], axis=0)
@@ -613,6 +632,19 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                 T = T_inv(_T_from_gel_frame(frame)) @ T_w_obj
                 pen[side] = float(_pen_for_object(args.object, args.object_size, T, gel_grid(32, 0.009)).max())
             return pen
+
+        def required_gap_for_gel_frames(frames, contact_depth):
+            required = 0.0
+            supports = {}
+            for side in ("left", "right"):
+                frame = frames.get(side)
+                if frame is None:
+                    return None, supports
+                normal = np.asarray(frame["normal"], dtype=np.float64)
+                support = _support_extent_for_object(args.object, args.object_size, normal)
+                supports[side] = float(support)
+                required += support - float(contact_depth)
+            return float(max(required, 0.0)), supports
 
         def current_live_contact_snapshot():
             pad_pose = current_pad_pose_w()
@@ -979,24 +1011,29 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                 max(float(args.max_live_placement_pen), 0.0),
             )
             placement_target_pen = min(max(float(args.place_target_pen), 0.0), placement_cap)
-            desired_gap = max(float(args.object_size) - 2.0 * placement_target_pen, 0.0)
+            nominal_desired_gap = max(float(args.object_size) - 2.0 * placement_target_pen, 0.0)
             for row in valid:
+                required_gap, supports = required_gap_for_gel_frames(row["frames"], placement_target_pen)
+                if required_gap is None:
+                    required_gap = nominal_desired_gap
                 row["placement_cap_m"] = float(placement_cap)
                 row["placement_recess_margin_m"] = float(placement_recess_margin)
                 row["placement_target_pen_m"] = float(placement_target_pen)
-                row["placement_desired_gap_m"] = float(desired_gap)
-                row["placement_desired_gap_error_m"] = float(abs(row["gap_m"] - desired_gap))
+                row["placement_nominal_gap_m"] = float(nominal_desired_gap)
+                row["placement_required_gap_m"] = float(required_gap)
+                row["placement_support_m"] = supports
+                row["placement_gap_clearance_m"] = float(row["gap_m"] - required_gap)
+                row["placement_desired_gap_m"] = float(required_gap)
+                row["placement_desired_gap_error_m"] = float(abs(row["gap_m"] - required_gap))
             bracket = None
             if placement_target_pen > 0.0:
-                if valid and abs(float(valid[0]["gap_m"]) - desired_gap) <= 1.0e-12:
+                if valid and abs(float(valid[0]["placement_gap_clearance_m"])) <= 1.0e-12:
                     bracket = (valid[0], valid[0])
                 for prev, curr in zip(valid, valid[1:]):
                     if bracket is not None:
                         break
-                    prev_gap = float(prev["gap_m"])
-                    curr_gap = float(curr["gap_m"])
-                    prev_delta = prev_gap - desired_gap
-                    curr_delta = curr_gap - desired_gap
+                    prev_delta = float(prev["placement_gap_clearance_m"])
+                    curr_delta = float(curr["placement_gap_clearance_m"])
                     if abs(curr_delta) <= 1.0e-12 or prev_delta * curr_delta < 0.0:
                         bracket = (prev, curr)
                         break
@@ -1004,25 +1041,34 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                 prev, curr = bracket
                 prev_gap = float(prev["gap_m"])
                 curr_gap = float(curr["gap_m"])
-                denom = curr_gap - prev_gap
-                frac = 0.0 if abs(denom) <= 1.0e-12 else (desired_gap - prev_gap) / denom
+                prev_clearance = float(prev["placement_gap_clearance_m"])
+                curr_clearance = float(curr["placement_gap_clearance_m"])
+                denom = curr_clearance - prev_clearance
+                frac = 0.0 if abs(denom) <= 1.0e-12 else -prev_clearance / denom
                 frac = float(min(1.0, max(0.0, frac)))
                 interp_target = (1.0 - frac) * float(prev["target"]) + frac * float(curr["target"])
                 interp_step = (1.0 - frac) * float(prev["step"]) + frac * float(curr["step"])
+                interp_gap = (1.0 - frac) * prev_gap + frac * curr_gap
+                prev_required = float(prev["placement_required_gap_m"])
+                curr_required = float(curr["placement_required_gap_m"])
+                interp_required = (1.0 - frac) * prev_required + frac * curr_required
                 place_row = {
                     "step": float(interp_step),
                     "target": float(interp_target),
                     "finger_target": float(interp_target),
                     "finger_joint_pos": None,
-                    "gap_m": float(desired_gap),
+                    "gap_m": float(interp_gap),
                     "midpoint": None,
                     "frames": None,
-                    "target_gap_error_m": float(abs(desired_gap - target_gap)),
-                    "preclose_gap_error_m": float(abs(desired_gap - preclose_gap)),
+                    "target_gap_error_m": float(abs(interp_gap - target_gap)),
+                    "preclose_gap_error_m": float(abs(interp_gap - preclose_gap)),
                     "place_depth_mode": "interpolated_live",
                     "placement_depth_m": float(placement_target_pen),
                     "placement_target_pen_m": float(placement_target_pen),
-                    "placement_desired_gap_m": float(desired_gap),
+                    "placement_nominal_gap_m": float(nominal_desired_gap),
+                    "placement_required_gap_m": float(interp_required),
+                    "placement_gap_clearance_m": float(interp_gap - interp_required),
+                    "placement_desired_gap_m": float(interp_required),
                     "placement_cap_m": float(placement_cap),
                     "placement_recess_margin_m": float(placement_recess_margin),
                     "bracket_fraction": float(frac),
@@ -1035,6 +1081,9 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                             "origin_gap_m": prev.get("origin_gap_m"),
                             "left_face_gap_m": prev.get("left_face_gap_m"),
                             "right_face_gap_m": prev.get("right_face_gap_m"),
+                            "placement_required_gap_m": prev.get("placement_required_gap_m"),
+                            "placement_gap_clearance_m": prev.get("placement_gap_clearance_m"),
+                            "placement_support_m": prev.get("placement_support_m"),
                         },
                         {
                             "step": int(curr["step"]),
@@ -1044,6 +1093,9 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                             "origin_gap_m": curr.get("origin_gap_m"),
                             "left_face_gap_m": curr.get("left_face_gap_m"),
                             "right_face_gap_m": curr.get("right_face_gap_m"),
+                            "placement_required_gap_m": curr.get("placement_required_gap_m"),
+                            "placement_gap_clearance_m": curr.get("placement_gap_clearance_m"),
+                            "placement_support_m": curr.get("placement_support_m"),
                         },
                     ],
                 }
@@ -1053,6 +1105,16 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                 place_row["predicted_pen_m"] = None
                 preclose_row = place_row
             gap_values = [float(r["gap_m"]) for r in valid]
+            required_gap_values = [
+                float(r["placement_required_gap_m"])
+                for r in valid
+                if r.get("placement_required_gap_m") is not None
+            ]
+            clearance_values = [
+                float(r["placement_gap_clearance_m"])
+                for r in valid
+                if r.get("placement_gap_clearance_m") is not None
+            ]
             origin_gap_values = [
                 float(r["origin_gap_m"])
                 for r in valid
@@ -1062,13 +1124,25 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
             if place_row is None:
                 if gap_values:
                     failure_detail = (
-                        "no calibrated close row bracket crossed desired placement gap "
-                        f"{desired_gap:.6g} m for target_pen={placement_target_pen:.6g} m "
+                        "no calibrated close row bracket crossed support-aware placement clearance "
+                        f"for nominal_gap={nominal_desired_gap:.6g} m target_pen={placement_target_pen:.6g} m "
                         f"within cap={placement_cap:.6g} m; "
                         f"rows={len(rows)} valid_rows={len(valid)} "
                         f"first_gap={gap_values[0]:.6g} m last_gap={gap_values[-1]:.6g} m "
                         f"min_gap={min(gap_values):.6g} m max_gap={max(gap_values):.6g} m"
                     )
+                    if required_gap_values:
+                        failure_detail += (
+                            f" min_required_gap={min(required_gap_values):.6g} m "
+                            f"max_required_gap={max(required_gap_values):.6g} m"
+                        )
+                    if clearance_values:
+                        failure_detail += (
+                            f" first_clearance={clearance_values[0]:.6g} m "
+                            f"last_clearance={clearance_values[-1]:.6g} m "
+                            f"min_clearance={min(clearance_values):.6g} m "
+                            f"max_clearance={max(clearance_values):.6g} m"
+                        )
                     if origin_gap_values:
                         failure_detail += (
                             f" first_origin_gap={origin_gap_values[0]:.6g} m "
@@ -1076,8 +1150,8 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                         )
                 else:
                     failure_detail = (
-                        "no calibrated close row bracket crossed desired placement gap "
-                        f"{desired_gap:.6g} m for target_pen={placement_target_pen:.6g} m "
+                        "no calibrated close row bracket crossed support-aware placement clearance "
+                        f"for nominal_gap={nominal_desired_gap:.6g} m target_pen={placement_target_pen:.6g} m "
                         f"within cap={placement_cap:.6g} m; rows={len(rows)} valid_rows=0"
                     )
             return {
@@ -1087,7 +1161,8 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                 "placement_cap_m": float(placement_cap),
                 "placement_recess_margin_m": float(placement_recess_margin),
                 "placement_target_pen_m": float(placement_target_pen),
-                "placement_desired_gap_m": float(desired_gap),
+                "placement_nominal_gap_m": float(nominal_desired_gap),
+                "placement_desired_gap_m": None if place_row is None else place_row.get("placement_desired_gap_m"),
                 "place_center": None if place_center is None else place_center.tolist(),
                 "place_row": place_row,
                 "preclose_row": preclose_row,
@@ -1289,8 +1364,8 @@ def _try_start_isaac(manifest_path: str, args) -> dict:
                 )
                 T_link_gel = np.asarray(pad["T_link_gel"], dtype=np.float64)
                 T_w_gel = T_w_link @ T_link_gel
-                radius = args.object_size / 2.0
-                desired = radius - depth
+                support = _support_extent_for_object(args.object, args.object_size, T_w_gel[:3, 2])
+                desired = support - depth
                 centers.append(T_w_gel @ np.array([0.0, 0.0, desired, 1.0]))
                 origins.append(T_w_gel[:3, 3].copy())
                 normals.append(T_w_gel[:3, 2].copy())
