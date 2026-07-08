@@ -33,9 +33,9 @@ Vision-based tactile sensors (VBTS) such as GelSight and DIGIT let robots percei
 contact through the deformation of a soft, marker-printed gel. Simulating them
 faithfully requires solving frictional elastic contact, which is expensive,
 non-differentiable, and ill-suited to closed-loop control. We learn a
-\emph{Fourier neural operator} (FNO) that maps a contact field to the
-surface marker-displacement field---augmented with a lightweight local
-refinement head (LR-FNO, an adaptation of the U-FNO family)---and use it as a
+locally refined \emph{Fourier neural operator} (LR-FNO) that maps a contact
+field to the surface marker-displacement field---an adaptation of the U-FNO
+family with a lightweight local refinement head---and use it as a
 differentiable,
 FEM-fidelity, hardware-light surrogate for the contact solver. Trained on and
 benchmarked against finite-element IPC/GIPC frictional-contact physics generated
@@ -68,86 +68,156 @@ Vision-based tactile sensors (VBTS)---GelSight~\cite{yuan2017gelsight},
 DIGIT~\cite{lambeta2020digit}, and marker-gel variants---give robots a dense,
 high-resolution sense of touch by imaging the deformation of a soft elastomer
 printed with a grid of markers. They have become a workhorse of contact-rich
-manipulation, but \emph{simulating} them is hard: the underlying signal is the
-solution of a frictional, hyper-elastic contact problem. High-fidelity finite
-element (FEM) solvers reproduce this physics but are slow, are not differentiable,
-and cannot be placed inside a control or reinforcement-learning loop. Existing
-tactile simulators trade this fidelity for speed through kinematic
-heuristics~\cite{wang2022tacto} or linear superposition~\cite{si2022taxim}, which
-break down exactly in the stick--slip regime that manipulation cares about.
+manipulation, but \emph{simulating} them is hard for a structural, not incidental,
+reason: the signal a VBTS reports is the \emph{solution} of a frictional,
+hyper-elastic contact problem. This forces existing simulators onto one horn of a
+trilemma, and each horn is a concrete bottleneck.
+\emph{(B1)~Fidelity vs.\ speed.} High-fidelity finite-element (FEM/IPC) solvers
+reproduce the physics but cost seconds per frame---too slow to sit inside a
+control or reinforcement-learning loop. The fast phenomenological simulators buy
+that speed by discarding physics: TACTO~\cite{wang2022tacto} renders gel
+deformation kinematically \emph{without friction}, while
+Taxim~\cite{si2022taxim} and FOTS~\cite{zhao2023fots} use example-based
+\emph{linear superposition}. Both are first-order and break down exactly in the
+stick--partial-slip--slip regime that manipulation depends on.
+\emph{(B2)~Fidelity with differentiability, but at engine cost.} A recent line of
+differentiable physics-based tactile engines---DiffTactile~\cite{si2024difftactile}
+and GPU contact solvers such as TacIPC and Taccel~\cite{taccel2025}---restores both
+fidelity and gradients, but pays by running a full contact solve \emph{every step}
+and inherits a known pathology: gradients taken through stiff, near-discontinuous
+contact can be \emph{worse} than gradient-free estimates~\cite{suh2022diffsim}.
+\emph{(B3)~Representation.} Learned tactile models are typically posed as
+per-point or image regressors, implicitly assuming a \emph{local} contact
+response---yet the surface displacement of a bonded gel is a \emph{non-local}
+(Green's-function) field, so the locality assumption is a modelling error, not a
+detail. No existing tool is simultaneously FEM-fidelity in slip, cheaply and
+cleanly differentiable, and millisecond-latency.
 
 We take a different route. Rather than approximate the renderer, we learn the
 \emph{operator} that the FEM solver computes: a map from a compact description of
 the contact (indentation profile and tangential drive) to the full surface
-marker-displacement field. We instantiate it as a Fourier neural operator
-(FNO)~\cite{li2021fno} and treat it as a drop-in surrogate for the solver that is
+marker-displacement field. We instantiate it as a locally refined Fourier
+neural operator (LR-FNO) and treat it as a drop-in surrogate for the solver that is
 (a)~\emph{FEM-fidelity}, validated frame-by-frame against IPC/GIPC
 frictional-contact ground truth; (b)~\emph{differentiable}, so gradients flow
 through it by autograd;
 and (c)~\emph{hardware-light and mesh-free}, running on a single consumer GPU.
+The move dissolves the trilemma by relocating the physics cost \emph{offline}: an
+IPC solver pays once to generate ground truth (B1), and the smooth learned map
+replaces the per-step solve with a millisecond forward pass whose gradients are
+clean (B2). The remaining question is whether a \emph{generic} operator suffices;
+we show it does not, and that the non-local field$\to$field framing (B3) is what
+makes it work.
 
 This positions our work squarely at the fusion of embodied AI and soft robotics:
 a fast, differentiable model of a soft tactile sensor that can sit inside a
 control loop. Our contributions are:
 
 \begin{enumerate}
-\item \textbf{A non-locality argument for tactile operator learning.}
-We show that posing the problem as \emph{field$\to$field} (not per-point
-regression) is decisive: surface displacement is a non-local Green's-function
-response, so a global spectral operator beats a local MLP by
-$9.1\times$, and
-beats reimplemented TACTO-, Taxim/FOTS-, and Cattaneo--Mindlin-style baselines by
-$5.0$--$13.8\times$, all measured on the \emph{same} IPC ground truth
-(Sec.~\ref{sec:exp-accuracy}). Adding a lightweight local refinement to the
-spectral trunk (LR-FNO, adapting the U-FNO family~\cite{wen2022ufno}) improves
-the trunk by a further $24\%$ on every one of five seeds (paired $t{=}4.7$)
-at $+3.3\%$ parameters.
-\item \textbf{Differentiable control through a frozen operator.}
+\item \textbf{A physics-matched tactile operator architecture, LR-FNO (attacks B3, B1).}
+We build the surrogate so that each architectural element mirrors a mechanism of
+the contact physics it replaces. A global spectral trunk supplies the non-local,
+Green's-function support that bonded-gel elasticity demands---posing the problem
+as \emph{field$\to$field} rather than per-point regression---and a lightweight
+local-refinement path ($+3.3\%$ parameters) restores the sharp near-contact-edge
+features that frictional slip creates and a band-limited spectral basis smooths
+away. Both design choices are validated separately on the \emph{same} IPC ground
+truth: the non-local trunk beats an otherwise-matched local per-point MLP by
+$9.1\times$ and reimplemented TACTO-, Taxim/FOTS-, and Cattaneo--Mindlin-style
+baselines by $5.0$--$13.8\times$; the refinement path improves the trunk by a
+further $24\%$ on every one of five seeds (paired $t{=}4.7$)
+(Sec.~\ref{sec:exp-accuracy}).
+\item \textbf{Physical information enters the network as fields, not parameters.}
+The operator consumes contact state in physical form: a geometric
+penetration-depth field and a friction-drive field masked to the contact
+footprint, sampled on the marker grid, with material scalars $(\mu,E)$ as
+conditioning and a Coulomb-consistent contact-mode taxonomy supervising an
+auxiliary multitask head. This encoding is what lets a single frozen model span
+normal, stick, partial-slip, and full-slip contact, and degrade gracefully
+(at most $2.1\times$) rather than fail under out-of-range indenter radius and
+material parameters (Sec.~\ref{sec:exp-accuracy}).
+\item \textbf{Differentiable control through a frozen operator (attacks B2).}
 Backpropagating a goal-conditioned policy through the frozen surrogate reaches a
 tactile target with $72\times$ fewer target-reaching model queries and
 $24\times$ less wall-clock than evolution strategies, while also reaching lower final loss
 (Sec.~\ref{sec:exp-control}). We find the often-reported pathology of
 differentiable simulators~\cite{suh2022diffsim} does \emph{not} bite here, and
 explain why.
-\item \textbf{An autograd-connected sensor pipeline.}
+\item \textbf{An autograd-connected sensor pipeline (extends B2 to the image).}
 A torch marker-dot renderer composes with the operator, $\mathrm{render}\circ
-\mathrm{FNO}$, so a control action can be recovered from the rendered tactile
+\mathrm{LR\mbox{-}FNO}$, so a control action can be recovered from the rendered tactile
 \emph{image} by gradient descent (Sec.~\ref{sec:exp-sensor}).
-\item \textbf{An honest scope.} We distinguish averaged simulation ground truth
-from real sensor noise, and delimit the current environment and geometry
-(Sec.~\ref{sec:limits}).
 \end{enumerate}
+Throughout, we keep an honest scope: we distinguish averaged simulation ground
+truth from real sensor noise and delimit the current environment and geometry
+(Sec.~\ref{sec:limits}).
 
 \section{Related Work}\label{sec:related}
 
-\textbf{Simulating vision-based tactile sensors.}
-TACTO~\cite{wang2022tacto} renders gel deformation kinematically without friction;
-Taxim~\cite{si2022taxim} and FOTS~\cite{zhao2023fots} use example-based linear
-superposition for fast optical and marker simulation. These are fast but model
-contact only to first order. A recent line builds \emph{differentiable, physics-based}
-tactile simulators---DiffTactile~\cite{si2024difftactile} and GPU contact solvers
-such as TacIPC and Taccel~\cite{taccel2025}---which raise fidelity at the cost of a
-full physics engine. Our surrogate is complementary: such solvers are excellent
-\emph{ground-truth generators}, while the learned operator provides a
-millisecond-latency, differentiable approximation of one frozen solver.
+\textbf{Fast phenomenological VBTS simulators.}
+The first generation of tactile simulators optimises for rendering speed.
+TACTO~\cite{wang2022tacto} drives a depth-based renderer from a rigid-body engine
+and produces gel images kinematically, with \emph{no} frictional contact model;
+Taxim~\cite{si2022taxim} and FOTS~\cite{zhao2023fots} calibrate example-based
+\emph{linear-superposition} maps from contact geometry to the optical and
+marker-motion signal. \emph{What they achieve:} real-time, easy-to-calibrate
+optical simulation adequate for perception pretraining. \emph{Their bottleneck (B1):}
+the contact response is modelled only to first order, so tangential marker motion
+in the stick--partial-slip--slip transition---the very signal used for grasp
+stability and slip detection---is not physical. We keep their spirit of a fast
+forward model but ground it frame-by-frame in converged frictional physics rather
+than in a linear or kinematic proxy, and we quantify the gap: on identical IPC
+ground truth our operator improves on reimplemented TACTO-, Taxim/FOTS-, and
+analytic Cattaneo--Mindlin-style baselines by $5.0$--$13.8\times$
+(Sec.~\ref{sec:exp-accuracy}).
 
-\textbf{Neural operators.}
+\textbf{Differentiable, physics-based tactile simulation.}
+A second generation restores physical fidelity \emph{and} gradients.
+DiffTactile~\cite{si2024difftactile} exposes an end-to-end differentiable
+soft-contact pipeline, and GPU incremental-potential solvers such as TacIPC and
+Taccel~\cite{taccel2025}, building on GIPC-style barrier
+contact~\cite{huang2024gipc,nguyen2024tacex}, deliver convergent friction at
+interactive rates. \emph{What they achieve:} trustworthy contact with usable
+sensitivities. \emph{Their bottleneck (B2):} fidelity is paid for by executing a
+full contact solve at \emph{every} simulation step, and differentiating through
+stiff barrier/near-discontinuous contact is exactly the regime where analytic
+gradients can degrade~\cite{suh2022diffsim}. Our position is deliberately
+complementary rather than competitive: we \emph{use} such a solver (libuipc/GIPC)
+as the ground-truth generator, then \emph{amortise} it into a single frozen
+operator whose forward pass is milliseconds and whose gradient is smooth by
+construction. We solve the amortisation-and-gradient bottleneck, not the online
+solver bottleneck.
+
+\textbf{Neural operators as PDE surrogates.}
 FNO~\cite{li2021fno} and DeepONet~\cite{lu2021deeponet} learn maps between function
-spaces and have become standard surrogates for PDE solution
-operators~\cite{kovachki2023neuraloperator}. Attention-based operators such as the
-Galerkin Transformer~\cite{cao2021galerkin} extend this family, and
-global--local hybrids such as U-FNO~\cite{wen2022ufno} augment Fourier layers
-with local convolutional paths. We bring operator
-learning to tactile contact, adapt the global--local family to it, and,
-crucially, exploit its non-locality and
-differentiability rather than only its accuracy.
+spaces and are now standard surrogates for PDE solution
+operators~\cite{kovachki2023neuraloperator}; attention-based variants such as the
+Galerkin Transformer~\cite{cao2021galerkin} and global--local hybrids such as
+U-FNO~\cite{wen2022ufno}, which augment Fourier layers with a local convolutional
+path, extend the family. \emph{What this line achieves:} mesh-free, resolution-flexible
+operators for canonical parametric PDEs. \emph{The gap (B3):} these operators are
+almost never applied to frictional \emph{contact}, and learned \emph{tactile}
+models instead default to per-point or per-pixel regression, silently assuming a
+local response. We argue this is the wrong inductive bias for a bonded gel, whose
+surface displacement is a non-local Green's-function field, and we make the case
+empirically: the field$\to$field spectral operator beats an otherwise-matched
+local MLP by $9.1\times$ on the same data, and a lightweight local-refinement head
+(adapting the U-FNO global--local idea to near-contact sharp features) adds a
+further $24\%$ across five seeds. We thus bring operator learning to tactile
+contact and exploit its \emph{non-locality} and \emph{differentiability}, not only
+its accuracy.
 
 \textbf{Differentiable simulation for control.}
 Differentiable physics~\cite{hu2020difftaichi} promises low-variance policy
 gradients, but Suh~\textit{et al.}~\cite{suh2022diffsim} show that stiff or
-discontinuous dynamics can make these gradients worse than zeroth-order estimates.
-We test this directly through a learned contact operator and find clean gradients
-for the present one-step quasi-static control problem.
+discontinuous dynamics can make these gradients \emph{worse} than zeroth-order
+estimates---the pathology underlying B2. Rather than assume it away, we test it
+directly by backpropagating a policy through the learned contact operator, and
+find the gradients are clean for the present one-step quasi-static problem: policy
+learning reaches the target with $72\times$ fewer model queries and $24\times$
+less wall-clock than a gradient-free baseline (Sec.~\ref{sec:exp-control}). The
+learned smooth surrogate is precisely what removes the stiffness that makes B2
+bite.
 
 \section{Problem Formulation and Ground Truth}\label{sec:setup}
 
@@ -156,7 +226,7 @@ for the present one-step quasi-static control problem.
 data and is the yardstick; an \emph{analytic validator}
 (Hertz~\cite{johnson1985contact} + Cattaneo--Mindlin~\cite{mindlin1949}) checks the
 ground truth and provides a first-principles baseline; and the \emph{fast
-differentiable surrogate} (FNO) is our contribution.
+differentiable surrogate} (LR-FNO) is our contribution.
 
 \textbf{FEM ground truth.} We simulate a representative thin-gel
 $20\times20\times3$\,mm tactile sensor with
@@ -177,6 +247,32 @@ regimes represented, yielding normal / stick / partial-slip / full-slip counts o
 $425/712/895/488$ (test: $68/113/142/77$). The gel bottom is bonded as a pinned
 Dirichlet boundary to a rigid transparent support; the top is the contact
 surface, the sides are free, and the indenter is rigid and displacement-controlled.
+Each element of this boundary setup is chosen to match the physical sensor
+rather than for numerical convenience. \emph{Bottom (pinned Dirichlet).} In a
+real VBTS the elastomer is cast or glued directly onto the rigid, transparent
+camera window (acrylic or glass), so zero displacement at the base is the
+physically correct condition, not an idealisation. It is also what defines the
+mechanical regime: a bonded, few-millimetre gel responds as a
+substrate-confined \emph{thin layer}, whose displacement field differs
+systematically from the unbounded half-space assumed by Hertz-type analytic
+models---one of the reasons an FEM/IPC ground truth is needed at all. Finally,
+the rigid anchor is what keeps the tangential channel well-posed: with a
+compliant bottom constraint the sheared gel translates near-rigidly, and this
+common-mode drift dominates the \emph{relative} marker motion that carries the
+stick--slip signal; pinning the base removes the drift mode by construction.
+\emph{Sides (traction-free).} The contact radius stays small compared to the
+lateral half-width of the pad even at the deepest indentation, so the side
+walls carry negligible load; leaving them free avoids imposing an artificial
+lateral stiffness that a clamped side wall would add. \emph{Indenter (rigid,
+displacement-controlled).} The indenting object is orders of magnitude stiffer
+than the gel ($E\!\sim\!10^{5}$\,Pa), so its own deformation is negligible, and
+displacement control (prescribed depth, then prescribed tangential travel)
+yields a deterministic loading path through the stick--partial-slip--full-slip
+sequence, whereas force control would make the regime labels depend on the
+solver's friction state. \emph{Top (frictional contact).} The top face is left
+free except for the IPC barrier contact itself, which enforces
+non-penetration and Coulomb-consistent friction without a mesh-dependent
+contact stiffness.
 Because GPU IPC solves are not bitwise repeatable, each frame's target is a
 robust average over up to $K{=}5$ repeated solves: an adaptive filter keeps the
 largest replicate subset (two to five) whose mean pairwise tangential distance
@@ -200,7 +296,7 @@ use these labels both as a multitask target and for per-regime error reporting.
 
   \node[gt] (fem) {IPC/GIPC FEM\\(ground truth)};
   \node[box, right=of fem] (ctx) {contact field\\$(\text{profile},\,\text{shear}\!\cdot\!\text{mask})$};
-  \node[ours, right=of ctx] (fno) {FNO\\$\mathcal{G}_\theta$ (frozen)};
+  \node[ours, right=of ctx] (fno) {LR-FNO\\$\mathcal{G}_\theta$ (frozen)};
   \node[box, right=of fno] (disp) {marker field\\$\mathbf{u}\in\mathbb{R}^{M\times3}$};
   \node[ours, right=of disp] (rend) {marker-dot\\renderer};
   \node[box, right=of rend] (img) {tactile\\image};
@@ -218,7 +314,7 @@ use these labels both as a multitask target and for per-regime error reporting.
   \draw[grad] (rew.west) -- node[below,font=\scriptsize]{$\nabla_\phi$ via autograd} (pol.east);
 \end{tikzpicture}
 }
-\caption{The differentiable tactile pipeline. The FNO surrogate is trained once
+\caption{The differentiable tactile pipeline. The LR-FNO surrogate is trained once
 against FEM ground truth, then frozen. A marker-dot renderer turns its output
 field into a tactile image. The policy is trained by backpropagating an image- or
 field-space reward through the frozen surrogate (red, dashed).}
@@ -227,31 +323,77 @@ field-space reward through the frozen surrogate (red, dashed).}
 
 \section{Method}\label{sec:method}
 
-\subsection{Field-to-field operator surrogate}\label{sec:method-fno}
-Let $a$ be the input contact \emph{field} on the gel surface---an indentation-depth
-profile stacked with a tangential-drive channel masked to the contact region---and
-let $u$ be the output marker-displacement \emph{field}. We learn the solution
-operator $\mathcal{G}_\theta : a \mapsto u$ as an FNO~\cite{li2021fno}, whose
-spectral-convolution layers apply a global, learned kernel in the Fourier domain:
+\subsection{Neural-operator preliminaries}\label{sec:method-no}
+A conventional network learns a map between finite-dimensional vectors; a
+\emph{neural operator} learns a map $\mathcal{G}:\mathcal{A}\to\mathcal{U}$
+between \emph{function spaces} from pairs of input--output
+functions~\cite{kovachki2023neuraloperator}. In our problem the input function
+$a\in\mathcal{A}$ is the contact field on the gel surface---an indentation-depth
+profile stacked with a tangential-drive channel masked to the contact
+footprint---and the output function $u\in\mathcal{U}$ is the surface
+marker-displacement field; the $32\times32$ marker grid is merely the
+discretization on which both happen to be observed, not the object being
+learned. A neural operator composes layers of the form
+\begin{equation}
+v_{t+1}(x) = \sigma\!\Big(W\,v_t(x) + (\mathcal{K}v_t)(x)\Big),
+\label{eq:no-layer}
+\end{equation}
+i.e.\ a pointwise linear term plus a learned \emph{kernel integral operator}
+$(\mathcal{K}v)(x)=\int_{D}\kappa_\theta(x,y)\,v(y)\,dy$,
+so every layer has global support by construction. This abstraction is not
+merely convenient here---it is the form the physics already takes. For a bonded
+elastic layer the surface response to a contact traction $t$ is exactly a
+kernel integral, $u(x)=\int G(x,y)\,t(y)\,dy$, with $G$ the Green's function of
+the substrate-confined gel; friction and finite deformation make the true map
+nonlinear, but they do not remove its non-local structure. Learning
+$\mathcal{G}$ therefore amounts to learning a (nonlinear) Green's operator for
+the sensor.
+
+\subsection{The FNO trunk}\label{sec:method-fno}
+The cost of Eq.~\eqref{eq:no-layer} is the integral. The Fourier neural
+operator (FNO)~\cite{li2021fno} makes it tractable by restricting the kernel to
+be translation-invariant, $\kappa_\theta(x,y)=\kappa_\theta(x-y)$, so the
+integral becomes a convolution and, by the convolution theorem, a
+multiplication in the Fourier domain:
 \begin{equation}
 (\mathcal{K}v)(x) = \mathcal{F}^{-1}\!\big(R_\theta \cdot \mathcal{F}v\big)(x),
 \end{equation}
-truncated to the lowest $k$ modes. This global support is the crux. Surface
-displacement obeys an elastic Green's response: indenting one point moves a whole
-neighbourhood. A \emph{local} map (a per-point MLP fed the full parameter vector)
-can fit the easy param$\to$field direction but \emph{collapses} on field$\to$field
-($\relL=0.545$, $42^\circ$ direction error), whereas the FNO holds. The operator
-framing is therefore not a modelling convenience but the source of the result.
+where $R_\theta$ parameterizes the kernel directly by its lowest $k$ Fourier
+modes and the FFT gives quasi-linear cost. Two properties follow. First, the
+\emph{global receptive field in every layer} matches the Green's-function
+physics above: indenting one point moves a whole neighbourhood, and a spectral
+kernel propagates that influence across the pad in a single layer. This is the
+crux empirically, not just conceptually: a \emph{local} map (a per-point MLP
+fed the full parameter vector) can fit the easy param$\to$field direction but
+\emph{collapses} on field$\to$field ($\relL=0.545$, $42^\circ$ direction
+error), whereas the FNO holds. The operator framing is therefore not a
+modelling convenience but the source of the result. Second, however, the
+truncation to $k$ modes makes each spectral layer \emph{band-limited}: it
+represents smooth, long-wavelength structure cheaply but systematically blurs
+sharp, localized features.
 
-\textbf{Locally-refined variant (main model).} Our reported surrogate augments
-the spectral trunk with a lightweight local path: a two-layer convolutional stem
-added to the lifting layer, and a small refinement head that reads the trunk
-output, the local features, and the raw input. This adapts the global--local
-U-FNO family~\cite{wen2022ufno} to tactile fields---we adapt and evaluate, not
-propose, the architecture. The variant adds only $3.3\%$ parameters and is
-selected by a five-seed paired benchmark (Sec.~\ref{sec:exp-accuracy}), not by
-single-seed peak accuracy; we refer to it as \emph{LR-FNO} and keep the plain
-FNO trunk as an ablation.
+\subsection{From FNO to LR-FNO: restoring the local physics}
+\label{sec:method-lrfno}
+That band limit is not an abstract concern in tactile contact---the most
+informative part of the field lives exactly where it bites. The stick--slip
+transition creates a sharp annulus at the contact edge, and the penetration
+profile itself has a kink at the contact boundary; both sit in the high-order
+modes a truncated spectral basis smooths away, while the translation-invariance
+assumption is itself only approximate for a finite bonded pad. Our main model,
+\emph{LR-FNO}, therefore augments the spectral trunk with a lightweight local
+path: a two-layer convolutional stem added to the lifting layer, and a small
+refinement head that reads the trunk output, the local features, and the raw
+input. The division of labour mirrors the physics: the spectral trunk carries
+the smooth, non-local Green's response, while the convolutional path---whose
+small kernels are exactly the high-frequency, spatially-local complement of the
+truncated spectral basis---sharpens the near-edge features, anchored to the raw
+contact field so the correction cannot drift from the physical input. The
+global--local \emph{principle} is inherited from the U-FNO
+family~\cite{wen2022ufno}; what we propose and validate is this tactile
+instantiation and its pairing with the field encoding of Sec.~\ref{sec:setup}.
+The variant adds only $3.3\%$ parameters and is selected by a five-seed paired
+benchmark (Sec.~\ref{sec:exp-accuracy}), not by single-seed peak accuracy; we
+keep the plain FNO trunk as an ablation.
 
 We add two lightweight classification heads that predict the contact mode, trained
 multitask with the regression objective.
@@ -470,7 +612,7 @@ formal gradient verification or evidence for multi-step contact dynamics.
 \centering
 \includegraphics[width=0.95\columnwidth]{figs/sensor_gt_vs_fno.png}
 \caption{Rendered marker-dot tactile images across contact modes. Columns show
-IPC/GIPC ground truth, FNO prediction, image residual, and residual marker flow.
+IPC/GIPC ground truth, LR-FNO prediction, image residual, and residual marker flow.
 The differentiable renderer turns the predicted field into a sensor image without
 re-solving contact.}
 \label{fig:sensor}

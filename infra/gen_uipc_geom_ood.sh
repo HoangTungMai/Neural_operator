@@ -4,12 +4,26 @@
 #   sphere_oodR : sphere with R outside the production range (8/9/10 mm)
 #   cuboid      : square flat punch, half-side R in the production sphere range
 #   ellipsoid   : anisotropic ellipsoid, rx=R, ry=0.6R, rz=R
+#   bolt_hex    : Tier-4 mesh object #1, rounded hex bolt head
+#   rounded_tip : Tier-4 mesh object #2, curved-bottom ellipsoid tool
+#   cone        : Tier-4 mesh object #3, sharp point/tip primitive
+#   multi_lobe  : Tier-4 mesh object #4, star-shaped multi-contact primitive
+#   rounded_die : held-out rounded cube/die object
+#   gear        : held-out toothed flat-bottom object
+#   pebble      : held-out organic star-shaped object
 #
 # Usage:
 #   bash infra/gen_uipc_geom_ood.sh cylinder 6 25 3
 #   bash infra/gen_uipc_geom_ood.sh sphere_oodR 6 25 3
 #   bash infra/gen_uipc_geom_ood.sh cuboid 6 25 3
 #   bash infra/gen_uipc_geom_ood.sh ellipsoid 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh bolt_hex 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh rounded_tip 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh cone 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh multi_lobe 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh rounded_die 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh gear 6 25 3
+#   bash infra/gen_uipc_geom_ood.sh pebble 6 25 3
 set -u
 cd "$(dirname "$0")/.."
 
@@ -25,8 +39,16 @@ PY="${PY:-.venv-gate2/bin/python}"
 SCRIPT=/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py
 PROD_NPZ="${PROD_NPZ:-data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz}"
 OOD_ROOT="${OOD_ROOT:-data/uipc/geom_ood}"
-SWEEP_DIR="${SWEEP_DIR:-$OOD_ROOT/$GEOM_REQ/sweep}"
-OUT_DATA="${OUT_DATA:-$OOD_ROOT/$GEOM_REQ/${GEOM_REQ}_avg.npz}"
+if [ "$GEOM_REQ" = "bolt_hex" ] || [ "$GEOM_REQ" = "rounded_tip" ] || \
+   [ "$GEOM_REQ" = "cone" ] || [ "$GEOM_REQ" = "multi_lobe" ] || \
+   [ "$GEOM_REQ" = "rounded_die" ] || [ "$GEOM_REQ" = "gear" ] || \
+   [ "$GEOM_REQ" = "pebble" ]; then
+  GEOM_DIR="${GEOM_DIR:-$OOD_ROOT/mesh/$GEOM_REQ}"
+else
+  GEOM_DIR="${GEOM_DIR:-$OOD_ROOT/$GEOM_REQ}"
+fi
+SWEEP_DIR="${SWEEP_DIR:-$GEOM_DIR/sweep}"
+OUT_DATA="${OUT_DATA:-$GEOM_DIR/${GEOM_REQ}_avg.npz}"
 ROWS_DIR="$SWEEP_DIR/_rows"
 SHARD="${START_COMBO}_${END_COMBO}"
 PROG="/work/fem_progress_uipc_geom_${GEOM_REQ}_${SHARD}.txt"
@@ -37,7 +59,14 @@ case "$GEOM_REQ" in
   cuboid) DRIVER_GEOM="cuboid" ;;
   ellipsoid) DRIVER_GEOM="ellipsoid" ;;
   sphere_oodR) DRIVER_GEOM="sphere" ;;
-  *) echo "unsupported geometry: $GEOM_REQ (expected cylinder|sphere_oodR|cuboid|ellipsoid)" >&2; exit 2 ;;
+  bolt_hex) DRIVER_GEOM="mesh" ;;
+  rounded_tip) DRIVER_GEOM="mesh" ;;
+  cone) DRIVER_GEOM="mesh" ;;
+  multi_lobe) DRIVER_GEOM="mesh" ;;
+  rounded_die) DRIVER_GEOM="mesh" ;;
+  gear) DRIVER_GEOM="mesh" ;;
+  pebble) DRIVER_GEOM="mesh" ;;
+  *) echo "unsupported geometry: $GEOM_REQ (expected cylinder|sphere_oodR|cuboid|ellipsoid|bolt_hex|rounded_tip|cone|multi_lobe|rounded_die|gear|pebble)" >&2; exit 2 ;;
 esac
 
 # Pull the production gel/BC/IPC knobs from the checked GT file unless the caller
@@ -74,6 +103,21 @@ COMMON="--batch --indentor-geom $DRIVER_GEOM --gel-res $GEL_RES --eps-velocity $
         --indentor-constraint-strength $INDENTOR_CONSTRAINT_STRENGTH \
         --marker-side 32 --press-steps 40 --settle-steps 10 --shear-steps 80 \
         --shear-settle 10 --batch-reps $KREPS --progress-file $PROG"
+if [ "$GEOM_REQ" = "bolt_hex" ]; then
+  COMMON="$COMMON --indentor-mesh bolt_hex"
+elif [ "$GEOM_REQ" = "rounded_tip" ]; then
+  COMMON="$COMMON --indentor-mesh rounded_tip"
+elif [ "$GEOM_REQ" = "cone" ]; then
+  COMMON="$COMMON --indentor-mesh cone"
+elif [ "$GEOM_REQ" = "multi_lobe" ]; then
+  COMMON="$COMMON --indentor-mesh multi_lobe"
+elif [ "$GEOM_REQ" = "rounded_die" ]; then
+  COMMON="$COMMON --indentor-mesh rounded_die"
+elif [ "$GEOM_REQ" = "gear" ]; then
+  COMMON="$COMMON --indentor-mesh gear"
+elif [ "$GEOM_REQ" = "pebble" ]; then
+  COMMON="$COMMON --indentor-mesh pebble"
+fi
 
 mkdir -p "$SWEEP_DIR" "$ROWS_DIR"
 COMBO_META="$ROWS_DIR/_meta_${SHARD}.txt"
@@ -91,7 +135,7 @@ for ci in range(n):
         R = ood_r[ci % len(ood_r)]
     else:
         R = round(float(box.uniform(rmin, rmax)), 4)
-    R2 = 0.6 * R if geom == "ellipsoid" else R
+    R2 = 0.6 * R if geom == "ellipsoid" else (0.75 * R if geom == "rounded_tip" else R)
     mu = round(float(box.uniform(0.40, 0.80)), 3)
     E = round(float(box.uniform(0.5e5, 2.0e5)), 0)
     rng = np.random.default_rng(4200 + ci)
@@ -144,6 +188,11 @@ while read -r CI R R2 MU E SEED; do
 done < "$COMBO_META"
 
 echo "GEOM-OOD SHARD ${SHARD} DONE: combos_ok=$ok incomplete=$failc"
+if [ "$TEST_SIZE" = "0" ]; then
+  echo "GEOM-OOD SHARD ${SHARD}: TEST_SIZE=0, skip final aggregate (smoke mode)"
+  [ "$failc" = "0" ]
+  exit $?
+fi
 $PY -m novbts.groundtruth.aggregate_uipc_replicates \
   --sweep-dir "$SWEEP_DIR" --out "$OUT_DATA" --mode-shear-scale 0.001 \
   --expect-reps "$KREPS" --test-size "$TEST_SIZE" --shuffle-seed 3026

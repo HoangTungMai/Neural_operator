@@ -191,6 +191,19 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None,
     noise = replicate_noise(fields)
     traj_mean = None
     traj_noise = None
+    contact_profile = None
+    contact_profile_name = None
+    if "contact_profile" in ref.files:
+        for p, d in zip(paths, loaded):
+            if "contact_profile" not in d.files:
+                raise SystemExit(f"{p} missing contact_profile while first replicate has it")
+        profiles_all = np.stack([
+            np.asarray(d["contact_profile"], dtype=np.float32).reshape(-1, *np.asarray(d["contact_profile"]).shape[-2:])[0]
+            for d in loaded
+        ], axis=0)
+        contact_profile = profiles_all[keep_idx].mean(axis=0, dtype=np.float64).astype(np.float32)
+        if "contact_profile_name" in ref.files:
+            contact_profile_name = np.asarray(ref["contact_profile_name"]).copy()
     if "disp_traj" in ref.files:
         for p, d in zip(paths, loaded):
             if "disp_traj" not in d.files:
@@ -257,6 +270,10 @@ def average_files(paths: list[str], *, mode_shear_scale: float | None = None,
     if traj_mean is not None:
         out["disp_traj"] = traj_mean[None, ...].astype(np.float32)
         out["rep_noise_traj"] = np.array([traj_noise], dtype=np.float32)
+    if contact_profile is not None:
+        out["contact_profile"] = contact_profile[None, ...].astype(np.float32)
+        if contact_profile_name is not None:
+            out["contact_profile_name"] = contact_profile_name
     for key, value in noise.items():
         out[key] = np.array([value], dtype=np.float32)
     for key, value in raw_noise.items():
@@ -342,8 +359,20 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
         order = stratified_train_test_order(modes, test_size, shuffle_seed)
         rows = [rows[int(i)] for i in order]
 
+    param_width = max(np.asarray(r["params"]).shape[1] for r in rows)
+    params_rows = []
+    for r in rows:
+        params = np.asarray(r["params"], dtype=np.float32)
+        if params.shape[1] < param_width:
+            padded = np.zeros((params.shape[0], param_width), dtype=np.float32)
+            padded[:, :params.shape[1]] = params
+            if param_width >= 10 and params.shape[1] <= 9:
+                padded[:, 9] = params[:, 3]
+            params = padded
+        params_rows.append(params)
+
     merged: dict[str, np.ndarray] = {
-        "params": np.concatenate([r["params"] for r in rows], axis=0).astype(np.float32),
+        "params": np.concatenate(params_rows, axis=0).astype(np.float32),
         "coords": coords.astype(np.float32),
         "disp": np.concatenate([r["disp"] for r in rows], axis=0).astype(np.float32),
         "mode": np.concatenate([r["mode"] for r in rows], axis=0).astype(np.int32),
@@ -362,6 +391,10 @@ def aggregate_sweep(sweep_dir: str, out_path: str, *, mode_shear_scale: float | 
     if "disp_traj" in rows[0]:
         merged["disp_traj"] = np.concatenate([r["disp_traj"] for r in rows], axis=0).astype(np.float32)
         merged["rep_noise_traj"] = np.concatenate([r["rep_noise_traj"] for r in rows], axis=0).astype(np.float32)
+    if "contact_profile" in rows[0]:
+        merged["contact_profile"] = np.concatenate([r["contact_profile"] for r in rows], axis=0).astype(np.float32)
+        if "contact_profile_name" in rows[0]:
+            merged["contact_profile_name"] = np.concatenate([r["contact_profile_name"] for r in rows], axis=0)
     if test_size is not None:
         merged["split_test_size"] = np.array([test_size], dtype=np.int32)
         merged["split_shuffle_seed"] = np.array([shuffle_seed], dtype=np.int64)

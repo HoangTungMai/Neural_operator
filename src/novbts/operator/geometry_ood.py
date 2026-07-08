@@ -45,6 +45,8 @@ def _default_datasets() -> dict[str, str]:
         "sphere_oodR": "data/uipc/geom_ood/sphere_oodR/sphere_oodR_avg.npz",
         "cuboid": "data/uipc/geom_ood/cuboid/cuboid_avg.npz",
         "ellipsoid": "data/uipc/geom_ood/ellipsoid/ellipsoid_avg.npz",
+        "bolt_hex": "data/uipc/geom_ood/mesh/bolt_hex/bolt_hex_avg.npz",
+        "rounded_tip": "data/uipc/geom_ood/mesh/rounded_tip/rounded_tip_avg.npz",
     }
 
 
@@ -52,6 +54,8 @@ def _load(npz: str) -> dict:
     data = load(npz)
     raw = np.load(npz, allow_pickle=True)
     data["coords"] = np.asarray(raw["coords"], dtype=np.float32)
+    if "contact_profile" in raw.files:
+        data["contact_profile"] = np.asarray(raw["contact_profile"], dtype=np.float32)
     return data
 
 
@@ -117,10 +121,17 @@ def _geometry_distance(data: dict, train_radius_range=(0.002, 0.006)) -> float:
     ref[:, 8] = 0.0
     if ref.shape[1] > 9:
         ref[:, 9] = ref[:, 3]
-    inp, _ = params_to_fieldinput(params, coords, side)
+    if "contact_profile" in data:
+        cp = np.asarray(data["contact_profile"], dtype=np.float32)
+        if cp.ndim == 2:
+            cp = cp[None, ...]
+        inp0 = cp.reshape(cp.shape[0], side, side)
+    else:
+        inp, _ = params_to_fieldinput(params, coords, side)
+        inp0 = inp[:, 0]
     ref_inp, _ = params_to_fieldinput(ref, coords, side)
-    num = np.linalg.norm((inp[:, 0] - ref_inp[:, 0]).reshape(inp.shape[0], -1), axis=1)
-    den = np.linalg.norm(ref_inp[:, 0].reshape(inp.shape[0], -1), axis=1) + 1e-12
+    num = np.linalg.norm((inp0 - ref_inp[:, 0]).reshape(inp0.shape[0], -1), axis=1)
+    den = np.linalg.norm(ref_inp[:, 0].reshape(inp0.shape[0], -1), axis=1) + 1e-12
     base = float(np.mean(num / den))
     if params.shape[1] > 9 and np.any(np.abs(params[:, 8] - 5.0) < 0.5):
         anis = np.maximum(params[:, 3] / np.maximum(params[:, 9], 1e-12) - 1.0, 0.0)
@@ -412,7 +423,7 @@ def run_phase_e(args) -> dict:
     baseline_epochs = args.epochs if args.epochs > 0 else 80
     summary = {
         "status": "phase_e",
-        "scope": "4_shapes_mesh_pending",
+        "scope": "6_shapes_with_tier4_bolt_hex_and_rounded_tip",
         "device": str(DEV),
         "mode_names": MODE_NAMES,
         "sphere_train": args.sphere_train,

@@ -37,7 +37,7 @@ from novbts.operator.field2field import (
 )
 from novbts.operator.fem_benchmark import load, norm_from
 from novbts.groundtruth.hertz_mindlin import hertz_mindlin_field, hertz_scalars
-from novbts.paths import FEM, RUNS, ensure
+from novbts.paths import RUNS, ensure
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ class Setup:
 
 def context_tensors(S, idx):
     """For frame indices idx, precompute the action-independent pieces:
-      pen[B,H,W], mask[B,H,W], scal[B,2], ystar[B,3,H,W] (raw FEM target),
+      pen[B,H,W], mask[B,H,W], scal[B,2], ystar[B,3,H,W] (raw GT target),
       params_t[B,9], mode[B]. pen/mask depend on geometry (not on the (sx,sy) action),
       so the env is linear & differentiable in the action."""
     P = S.P[idx.cpu().numpy()]
@@ -113,7 +113,7 @@ def context_tensors(S, idx):
     pen = torch.tensor(inp_np[:, 0], device=DEV)                 # [B,H,W]
     mask = torch.tensor(contact_mask(P, S.coords, S.side), device=DEV)
     scal = torch.tensor(scal_np, device=DEV)
-    ystar = S.out[idx]                                           # raw FEM field [B,3,H,W]
+    ystar = S.out[idx]                                           # raw GT field [B,3,H,W]
     return {"pen": pen, "mask": mask, "scal": scal, "ystar": ystar,
             "params": torch.tensor(P, dtype=torch.float32, device=DEV), "mode": S.mode[idx]}
 
@@ -514,12 +514,12 @@ def run_policy(S, args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(FEM / "shear_fine_swept_normaug.npz"))
+    ap.add_argument("--data", default="data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz")
     ap.add_argument("--n-test", type=int, default=400)
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"])
+    ap.add_argument("--field-model", default="lr_fno", choices=["fno", "lr_fno"])
     ap.add_argument("--probe", action="store_true")
     ap.add_argument("--sweep-n", type=int, default=12)
     ap.add_argument("--train-policy", action="store_true")

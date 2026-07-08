@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 DATA = ROOT / "data"
+ASSETS = DATA / "assets"
 ANALYTIC = DATA / "analytic"
 FEM = Path(os.environ.get("NOVBTS_FEM_DIR", DATA / "fem"))
 RUNS = Path(os.environ.get("NOVBTS_RUNS_DIR", ROOT / "runs"))

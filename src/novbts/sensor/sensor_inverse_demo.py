@@ -2,7 +2,7 @@
 """Phase 5b -- the integrated Track-A <-> Track-B payoff.
 
 (1) Compatibility: the FNO surrogate + the differentiable renderer reproduce the
-    sensor observation -- FEM disp -> render vs FNO(contact) -> render agree in
+    sensor observation -- GT disp -> render vs operator(contact) -> render agree in
     marker-flow space over the held-out set.
 (2) Differentiable inverse FROM THE SENSOR IMAGE: recover the applied shear (sx,sy)
     of a frame by gradient descent through  render . FNO  on the rendered marker
@@ -28,7 +28,7 @@ from novbts.sensor.markercam import (
     PinholeCamera, deformed_marker_xyz, render_dots, marker_half_extent,
     sensor_marker_grid, sensor_marker_grid_pixel_even, sample_field_to_markers,
 )
-from novbts.paths import FEM, RUNS, ensure
+from novbts.paths import RUNS, ensure
 
 
 def representative_frames(mode, score, n_per_mode):
@@ -85,15 +85,15 @@ def inverse_summary(rows):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(FEM / "shear_fine_swept_normaug.npz"))
+    ap.add_argument("--data", default="data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz")
     ap.add_argument("--n-test", type=int, default=400)
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"])
+    ap.add_argument("--field-model", default="lr_fno", choices=["fno", "lr_fno"])
     ap.add_argument("--px", type=int, default=160)
     ap.add_argument("--sensor-marker-side", type=int, default=11,
-                    help="visible tracking-marker side; the underlying FEM/FNO field stays dense")
+                    help="visible tracking-marker side; the underlying GT/operator field stays dense")
     ap.add_argument("--marker-placement", choices=["pixel_even", "gel_even"], default="pixel_even",
                     help="pixel_even makes the rest camera image perfectly regular")
     ap.add_argument("--marker-pixel-fill", type=float, default=0.75,
@@ -171,7 +171,7 @@ def main():
         markers = sample_field_to_markers(field, field_coords_t, coords_t)
         return cam.project(deformed_marker_xyz(coords_t, markers))
 
-    # ===== (1) compatibility: FEM-render vs FNO-render in marker-flow space =====
+    # ===== (1) compatibility: GT-render vs operator-render in marker-flow space =====
     with torch.no_grad():
         fno_te = fno(nin(inp[te]), nsc(scal[te])) * ostd + om   # [nt,3,H,W] RAW disp (denormalised)
         flow_fem = disp_to_pix(out[te]) - pix_rest

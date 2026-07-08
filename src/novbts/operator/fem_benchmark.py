@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Full RQ1-RQ3 + FNO-vs-MLP + slip-F1 benchmark on selected FEM ground truth.
+"""Full RQ1-RQ3 + LR-FNO-vs-MLP + slip-F1 benchmark on corrected-BC IPC GT.
 
 Mirrors the analytic field->field benchmark (novbts.operator.field2field.main)
-but trains/evaluates on the swept fine-mesh FEM data
-(data/fem/shear_fine_swept.npz) -- closing the Gate-3 requirement to run the
-benchmark on REAL-physics GT rather than the analytic Hertz-Mindlin proxy.
+but trains/evaluates on the swept corrected-BC IPC/UIPC data
+(data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz) -- the current paper
+headline ground truth.
 
-  RQ1  per-mode accuracy; FNO vs per-point MLP (the non-locality claim on real physics)
+  RQ1  per-mode accuracy; LR-FNO vs per-point MLP (the non-locality claim)
   RQ2  generalisation to held-out parameter tails (extrapolate high R / mu / E)
-  RQ3  FNO/MLP inference throughput vs the real PhysX-FEM shear solver
+  RQ3  LR-FNO/MLP inference throughput vs the recorded IPC/GIPC solver time
   slip per-mode macro-F1 from multitask head (a) and separate classifier (b)
 
-Honest scope note: FEM data is in-box (R 15-25mm, mu 0.4-0.8, E 0.5-2e5).
+Honest scope note: IPC data is in-box (R 2-6mm, mu 0.4-0.8, E 0.5-2e5).
 RQ2 here is *extrapolation to the high tail of each parameter* (train on the
 lower 80%, test on the upper 20%), not the wider out-of-range OOD the analytic
-split could afford -- we cannot cheaply synthesise FEM outside the box.
+split could afford -- we cannot cheaply synthesise IPC outside the box.
 """
 import argparse
 import json
@@ -24,18 +24,22 @@ import torch
 
 from novbts.operator.field2field import (
     FNOField, PerPointMLP, SlipClassifierField,
-    params_to_fieldinput, train_operator, train_separate_clf, predict_raw,
+    fieldinput_from_contact_profile, params_to_fieldinput,
+    train_operator, train_separate_clf, predict_raw,
     throughput, rel_l2_per_mode, tangential_dir_error, macro_f1, count_parameters, DEV,
 )
 from novbts.groundtruth.hertz_mindlin import MODE_NAMES
-from novbts.paths import FEM, RUNS, ensure
+from novbts.paths import RUNS, ensure
 
 
 def load(npz):
     d = np.load(npz, allow_pickle=True)
     params, coords, disp, mode = d["params"], d["coords"], d["disp"], d["mode"]
     side = int(round(np.sqrt(coords.shape[0])))
-    inp, scal = params_to_fieldinput(params, coords, side)
+    if "contact_profile" in d.files:
+        inp, scal = fieldinput_from_contact_profile(params, d["contact_profile"], side)
+    else:
+        inp, scal = params_to_fieldinput(params, coords, side)
     out = disp.reshape(-1, side, side, 3).transpose(0, 3, 1, 2).astype(np.float32)
     meta = {}
     for key in ("solve_time_s", "n_replicates", "raw_n_replicates",
@@ -108,14 +112,14 @@ def norm_from(inp, out, scal):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(FEM / "shear_fine_swept.npz"))
+    ap.add_argument("--data", default="data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz")
     ap.add_argument("--n-test", type=int, default=400)
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--clf-epochs", type=int, default=40)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--lambda-cls", type=float, default=0.1)
-    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"],
+    ap.add_argument("--field-model", default="lr_fno", choices=["fno", "lr_fno"],
                     help="main field->field surrogate (lr_fno = LocalRefinedFNO)")
     args = ap.parse_args()
     # local import: hybrid_fno imports load/norm_from from this module
@@ -123,7 +127,7 @@ def main():
 
     D = load(args.data)
     side, N, nt = D["side"], D["inp"].shape[0], args.n_test
-    print(f"device={DEV}  FEM benchmark  N={N} side={side}  test_id=last {nt}")
+    print(f"device={DEV}  corrected-BC IPC benchmark  N={N} side={side}  test_id=last {nt}")
     cg = torch.tensor(np.stack(np.meshgrid(
         np.linspace(-1, 1, side), np.linspace(-1, 1, side), indexing="ij")[::-1], -1
     ).astype(np.float32)).to(DEV)
@@ -155,9 +159,10 @@ def main():
                                   multitask=True, lambda_cls=args.lambda_cls)
         return m, s
 
+    field_label = "LR-FNO" if args.field_model == "lr_fno" else "FNO"
     mlp, s_mlp = train("mlp");        print(f"[MLP] {s_mlp:.0f}s")
-    fno, s_fno = train("fno");        print(f"[FNO] {s_fno:.0f}s")
-    fno_mt, s_mt = train("fno_mt");   print(f"[FNO+slip a] {s_mt:.0f}s")
+    fno, s_fno = train("fno");        print(f"[{field_label}] {s_fno:.0f}s")
+    fno_mt, s_mt = train("fno_mt");   print(f"[{field_label}+slip a] {s_mt:.0f}s")
     torch.manual_seed(0)
     clf = SlipClassifierField().to(DEV)
     train_separate_clf(clf, fno, nin(tri), nsc(trs), trm, ostd, om, args.clf_epochs, args.lr)
@@ -221,7 +226,7 @@ def main():
         print(f"[RQ2 high_{pname}] in-dist {l2_id:.3f} -> extrapolated {l2_ood:.3f} "
               f"({l2_ood/max(l2_id,1e-9):.2f}x)")
 
-    # ===== RQ3: throughput vs the real PhysX-FEM shear solver =====
+    # ===== RQ3: throughput vs the recorded IPC/GIPC solver time =====
     solver_fps, production_fps, solver_source = solver_fps_from_data(D)
     speeds = {
         "mlp": throughput(mlp, nin(inp[te_idx]), nsc(scal[te_idx]), cg, is_mlp=True),
@@ -251,7 +256,7 @@ def main():
 
     # ===== print =====
     r1 = summary["RQ1"]
-    print(f"\n=== RQ1 accuracy (test_id, FEM GT) ===")
+    print(f"\n=== RQ1 accuracy (test_id, IPC/GIPC GT) ===")
     print(f"{'model':18s} {'overall':>8s} {'tang_dir°':>10s}")
     for nm in ["mlp", "fno", "fno_mt_a"]:
         print(f"{nm:18s} {r1[nm]['relative_l2']['overall']:8.3f} {r1[nm]['tangential_dir_error_deg']:10.1f}")

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Apples-to-apples bake-off: our neural operator (FNO) vs the marker-motion
+"""Apples-to-apples bake-off: our neural operator (LR-FNO) vs the marker-motion
 models of representative VBTS (vision-based tactile sensor) simulators, all
-trained and evaluated on the SAME PhysX-FEM ground truth.
+trained and evaluated on the SAME corrected-BC IPC/GIPC ground truth.
 
 Why reimplement rather than cite published numbers: cross-paper accuracy/fps is
 not comparable (different sensors, output modalities -- RGB image vs our marker
 displacement field, different contacts). The fair test is to give each method's
-*marker-motion model* the same FEM training data and the same metric.
+*marker-motion model* the same GT training data and the same metric.
 
 Representative VBTS simulators and the marker-motion model we reimplement:
   - TACTO  (Wang et al., RA-L 2022): physics/rendering sim on PyBullet. Its
@@ -19,16 +19,16 @@ Representative VBTS simulators and the marker-motion model we reimplement:
     displacement). -> `LinearSuperposition` (a single linear, shift-invariant
     conv = the discretised superposition kernel, no nonlinearity).
   - per-point MLP: learned-but-LOCAL lower bound (no global context).
-  - FNO (ours): non-local spectral operator.
+  - LR-FNO (ours): locally refined non-local spectral operator.
 
 We reimplement the marker-motion CORE of each simulator (not the optical
-renderer) and fit its free parameters on our FEM train split, exactly like we
-train the operators. If FNO beats the linear superposition model, that isolates
+renderer) and fit its free parameters on our GT train split, exactly like we
+train the operators. If LR-FNO beats the linear superposition model, that isolates
 the value of modelling the *nonlinear, non-local* stick-slip field that the
 linear/kinematic VBTS sims cannot represent.
 
 Usage:
-  python -m novbts.operator.vbts_baselines --data data/fem/shear_fine_swept_normaug.npz
+  python -m novbts.operator.vbts_baselines --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
 """
 import argparse
 import json
@@ -44,7 +44,7 @@ from novbts.operator.field2field import (
 )
 from novbts.operator.fem_benchmark import load, norm_from
 from novbts.groundtruth.hertz_mindlin import MODE_NAMES, hertz_mindlin_field
-from novbts.paths import FEM, RUNS, ensure
+from novbts.paths import RUNS, ensure
 
 
 class TactoKinematic(nn.Module):
@@ -200,7 +200,7 @@ class GalerkinOperator(nn.Module):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(FEM / "shear_fine_swept_normaug.npz"))
+    ap.add_argument("--data", default="data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz")
     ap.add_argument("--n-test", type=int, default=400)
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--modes", type=int, default=12)

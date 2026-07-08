@@ -185,6 +185,8 @@ import time
 import numpy as np
 from scipy.spatial import cKDTree
 
+from contact_imprint import mesh_contact_profile, mesh_object_surface
+
 import isaaclab.sim as sim_utils
 
 from tacex_uipc import UipcSim, UipcSimCfg
@@ -331,6 +333,47 @@ def ellipsoid_surface(rx, ry, rz, subdiv=2, center=(0.0, 0.0, 0.0)):
     return V, F
 
 
+def _bolt_hex_xy(radius, points_per_corner=4):
+    """Rounded-hex footprint polygon for Tier-4 object #1."""
+    angles = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False) + np.pi / 6.0
+    verts = np.stack([radius * np.cos(angles), radius * np.sin(angles)], axis=-1)
+    cut = 0.28
+    pts = []
+    for i, v in enumerate(verts):
+        prev_v = verts[(i - 1) % len(verts)]
+        next_v = verts[(i + 1) % len(verts)]
+        a = (1.0 - cut) * v + cut * prev_v
+        b = (1.0 - cut) * v + cut * next_v
+        for t in np.linspace(0.0, 1.0, points_per_corner, endpoint=False):
+            # Quadratic corner arc with the true hex vertex as the control point.
+            q = (1.0 - t) ** 2 * a + 2.0 * (1.0 - t) * t * v + t ** 2 * b
+            pts.append(q)
+    return np.asarray(pts, dtype=np.float64)
+
+
+def bolt_hex_surface(radius, half_z, center=(0.0, 0.0, 0.0)):
+    """Closed rounded hex bolt-head prism, deterministic and convex."""
+    cx, cy, cz = np.asarray(center, dtype=np.float64)
+    xy = _bolt_hex_xy(radius, points_per_corner=4)
+    verts = []
+    for z in (-half_z, half_z):
+        for x, y in xy:
+            verts.append((cx + x, cy + y, cz + z))
+    bottom_ci = len(verts)
+    verts.append((cx, cy, cz - half_z))
+    top_ci = len(verts)
+    verts.append((cx, cy, cz + half_z))
+    n = len(xy)
+    faces = []
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((i, j, n + j))
+        faces.append((i, n + j, n + i))
+        faces.append((bottom_ci, j, i))
+        faces.append((top_ci, n + i, n + j))
+    return np.asarray(verts, dtype=np.float64), np.asarray(faces, dtype=np.uint32)
+
+
 def fan_tet_sphere(V, F, center):
     """Deterministic tetrahedralisation of a CONVEX closed surface (V, F).
 
@@ -430,6 +473,27 @@ def marker_grid(side):
     xs = np.linspace(-GEL[0] / 2 * 0.9, GEL[0] / 2 * 0.9, side)
     yy, xx = np.meshgrid(xs, xs, indexing="ij")
     return np.stack([xx.reshape(-1), yy.reshape(-1)], axis=-1)
+
+
+def contact_profile(coords):
+    """Stored mesh-raycast penetration profile for mesh-input Tier 4."""
+    if args.indentor_geom != "mesh":
+        return None
+    params_row = np.array([
+        0.0, 0.0, args.depth, args.indentor_r, 0.0, 0.0,
+        args.mu, args.youngs, float(GEOM_CODE["mesh"]), indentor_r2(),
+    ], dtype=np.float32)
+    try:
+        return mesh_contact_profile(
+            coords,
+            params_row,
+            args.indentor_mesh or "bolt_hex",
+            half_z=indentor_half_z(),
+            r2=indentor_r2(),
+            subdiv=args.indentor_subdiv,
+        ).astype(np.float32)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def sample_to_markers(top_rest_xy, top_disp, coords):
@@ -556,7 +620,17 @@ def make_indentor_tetmesh(center):
         V, F = ellipsoid_surface(args.indentor_r, indentor_r2(), hz,
                                  subdiv=args.indentor_subdiv, center=center)
     elif geom == "mesh":
-        raise SystemExit("--indentor-geom mesh is reserved for Tier 4 contact-profile input")
+        try:
+            V0, F, bottom_off = mesh_object_surface(
+                args.indentor_mesh or "bolt_hex",
+                args.indentor_r,
+                hz,
+                r2=indentor_r2(),
+                subdiv=args.indentor_subdiv,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        V = V0 + np.asarray(center, dtype=np.float64)
     else:
         raise SystemExit(f"unknown indentor geom {geom!r}")
     return (*fan_tet_sphere(V, F, center), bottom_off)
@@ -864,6 +938,10 @@ def save_field(out_dir, coords, field, scalars, traj=None):
     if traj is not None:
         payload["disp_traj"] = traj[None, ...].astype(np.float32)
         payload["traj_fracs"] = np.linspace(0.0, 1.0, traj.shape[0]).astype(np.float32)
+    cp = contact_profile(coords)
+    if cp is not None:
+        payload["contact_profile"] = cp[None, ...].astype(np.float32)
+        payload["contact_profile_name"] = np.array([args.indentor_mesh or "bolt_hex"], dtype="U64")
     np.savez_compressed(
         os.path.join(out_dir, "uipc_gt_shear.npz"),
         **payload,

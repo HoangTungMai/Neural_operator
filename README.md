@@ -1,7 +1,7 @@
 # novbts — Neural-operator surrogate for a vision-based tactile sensor
 
-An **FNO** learns marker displacement fields as a fast surrogate that replaces an
-expensive contact solver, for downstream RL/control. The current paper headline
+An **LR-FNO** learns marker displacement fields as a fast surrogate that replaces
+an expensive contact solver, for downstream RL/control. The current paper headline
 numbers are produced on the corrected-BC realistic **IPC/UIPC** thin-gel dataset:
 
 `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz`
@@ -37,8 +37,8 @@ reports in `docs/` may describe superseded soft-BC or pre-reground runs.
 
 Current headline numbers are LR-FNO `rel-L2=0.060` (5-seed `0.0590±0.0014`,
 paired t=4.72 vs the plain FNO trunk), per-point MLP `rel-L2=0.545` (`9.0x`
-ratio), single-solve IPC/UIPC speedup `29,182x`, and adaptive raw `K=5`
-corrected-BC targets. Prior-lineage numbers (plain-FNO main-model era
+ratio), single-solve IPC/UIPC speedup `29,182x`, and corrected-BC targets built
+from raw `K=5` solves with adaptive kept subsets of `K=2..5`. Prior-lineage numbers (plain-FNO main-model era
 `rel-L2=0.074`/`7.35x`/`41,253x`; soft-BC `rel-L2=0.041`/`12.14x`/`82,827x`/`K=3`)
 are retained only as provenance — plain-FNO downstream artifacts are backed up
 as `*.FNO_MAIN.*`.

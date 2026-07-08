@@ -106,6 +106,37 @@ def params_to_fieldinput(params, coords, side):
     return inp, scal
 
 
+def fieldinput_from_contact_profile(params, contact_profile, side):
+    """Build the field input from a stored penetration/contact profile.
+
+    ``contact_profile`` is the channel-0 penetration field in metres on the same
+    marker grid as ``coords``. For mesh indentors the drive channels follow the
+    same convention as analytic shapes: shear is present where penetration is
+    positive and zero elsewhere.
+    """
+    p = np.asarray(params, dtype=np.float64)
+    if p.shape[1] < 8:
+        raise ValueError(f"params must have at least 8 columns, got {p.shape}")
+    cp = np.asarray(contact_profile, dtype=np.float32)
+    if cp.ndim == 2:
+        cp = cp[None, ...]
+    if cp.shape[0] == 1 and p.shape[0] != 1:
+        cp = np.repeat(cp, p.shape[0], axis=0)
+    if cp.shape != (p.shape[0], side, side):
+        raise ValueError(
+            f"contact_profile must have shape {(p.shape[0], side, side)}, got {cp.shape}"
+        )
+
+    sx, sy, mu, E = p[:, 4], p[:, 5], p[:, 6], p[:, 7]
+    mask = cp > 0.0
+    inp = np.zeros((p.shape[0], 3, side, side), np.float32)
+    inp[:, 0] = cp
+    inp[:, 1] = sx[:, None, None] * mask
+    inp[:, 2] = sy[:, None, None] * mask
+    scal = np.stack([mu, E], -1).astype(np.float32)
+    return inp, scal
+
+
 def gen_split(params, coords, side):
     """-> input [N,3,H,W], output disp [N,3,H,W], scalars [N,2], mode [N]."""
     inp, scal = params_to_fieldinput(params, coords, side)

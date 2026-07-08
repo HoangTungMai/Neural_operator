@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Phase 5a -- turn an FEM marker-displacement npz into a marker-dot SENSOR dataset.
+"""Phase 5a -- turn a GT marker-displacement npz into a marker-dot SENSOR dataset.
 
 Projects the gel-surface markers (rest + deformed) through a below-membrane pinhole
 camera and renders dot images. Stores the pixel positions + camera config (images are
 re-rendered on demand to save disk), validates the render->track round-trip, and writes
 a preview montage.
 
-  python -m novbts.sensor.build_sensor_dataset --data data/fem/shear_fine_swept_normaug.npz
+  python -m novbts.sensor.build_sensor_dataset --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
 """
 import argparse
 import json
@@ -71,10 +71,10 @@ def representative_frames(mode, score, n_per_mode):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(FEM / "shear_fine_swept_normaug.npz"))
+    ap.add_argument("--data", default="data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz")
     ap.add_argument("--px", type=int, default=160)
     ap.add_argument("--sensor-marker-side", type=int, default=11,
-                    help="visible tracking-marker side; the underlying FEM/FNO field stays dense")
+                    help="visible tracking-marker side; the underlying GT field stays dense")
     ap.add_argument("--marker-placement", choices=["pixel_even", "gel_even"], default="pixel_even",
                     help="pixel_even makes the rest camera image perfectly regular")
     ap.add_argument("--marker-pixel-fill", type=float, default=0.75,

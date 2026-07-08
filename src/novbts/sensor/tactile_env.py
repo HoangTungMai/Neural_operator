@@ -35,7 +35,7 @@ from novbts.sensor.markercam import (
     sensor_marker_grid_pixel_even, marker_half_extent,
 )
 from novbts.sensor.realism import add_camera_noise
-from novbts.paths import FEM, RUNS, ensure
+from novbts.paths import RUNS, ensure
 
 
 # ---------------------------------------------------------------------------
@@ -377,12 +377,12 @@ def run_demo(S, args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(FEM / "shear_fine_swept_normaug.npz"))
+    ap.add_argument("--data", default="data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz")
     ap.add_argument("--n-test", type=int, default=400)
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--modes", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--field-model", default="fno", choices=["fno", "lr_fno"])
+    ap.add_argument("--field-model", default="lr_fno", choices=["fno", "lr_fno"])
     ap.add_argument("--demo", action="store_true")
     ap.add_argument("--sensor-side", type=int, default=11)
     ap.add_argument("--px", type=int, default=64)
