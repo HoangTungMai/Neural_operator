@@ -35,7 +35,11 @@ __pycache__/
 
 # transient Isaac progress files (container-written, all variants)
 fem_progress*.txt
+sim_grasp_*progress.txt
 convergence.txt
+
+# local LLM proxy config (machine-specific, not project code)
+litellm-nvidia.yaml
 
 # scratch working dir (regenerable subsets, ad-hoc scripts, logs)
 scratchpad/
