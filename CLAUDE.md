@@ -17,7 +17,9 @@ branch `main`; current work on `phase4-diff-policy`). `README.md` at the root is
 
 - Python 3.10, editable install into a project venv: `.venv-gate2/bin/pip install -e .`
 - All paths resolve from the repo root via `novbts.paths` (ROOT/DATA/ANALYTIC/FEM/RUNS/DOCS), so
-  modules run from any CWD. **No `sys.path` hacks** — always run as modules:
+  host modules run from any CWD. **No `sys.path` hacks in host modules** — always run as modules
+  (the Docker-standalone GT/sim drivers under `groundtruth/isaac_*`, `groundtruth/tacex_*`, and
+  `sim/` are the intentional exception: they bootstrap `/work/src`):
   - `.venv-gate2/bin/python -m novbts.operator.field2field`  (headline field→field FNO)
   - `python -m novbts.operator.fem_train_compare` / `.eval_rq` / `.fem_benchmark`
   - `python -m novbts.report.make_pdf`
@@ -36,9 +38,15 @@ branch `main`; current work on `phase4-diff-policy`). `README.md` at the root is
     `aggregate_uipc_replicates.py`, `aggregate_uipc_convergence.py`.
 - `operator/` — the FNO and training/eval: `field2field` (headline), `param2field`,
   `eval_rq`, `fem_train_compare`, `fem_benchmark`.
-- `models/` — FNO / MLP / DeepONet / SpectralConv2d definitions.
+- `models.py` — FNO / MLP / DeepONet / SpectralConv2d definitions (single module, not a package).
 - `sensor/` — differentiable marker-dot VBTS renderer (`tactile_env.py`, camera + dot render).
-- `policy/` (`diff_policy.py`) — control policy learned through the differentiable FNO (Phase 4).
+- `operator/diff_policy.py` — control policy learned through the differentiable FNO (Phase 4).
+- `sim/` — Isaac Sim grasp env (UR3e + Robotiq 2F-85 + VBTS): `grasp_demo.py` (headline
+  grasp-lift driver, large), plus `build_robot_asset.py`, `gel_contact.py`, `vbts_sensor.py`,
+  `fno_export.py`, `grasp_montage.py`. **Like the GT extractors, these Isaac drivers run standalone
+  inside Docker and bootstrap `/work/src` onto `sys.path` — they do NOT rely on the editable
+  install and do NOT import as `novbts.*` at runtime.** Launched via `infra/run_sim_grasp.sh`
+  (not `docker` directly — bare `docker` exits 126 here). See memory `isaac-grasp-*` for gate state.
 - `report/` — PDF/slide generators (`make_pdf`, `make_summary_pdf`, `make_slides`, `make_phase5_pdf`).
 - `validation/` — GT validation/comparison utilities.
 Dead code / PoCs live in `scripts/archive/` (NOT in the package). Infra (Dockerfiles, sweep
@@ -86,9 +94,11 @@ Gotchas:
 
 ## Data & git
 
-- `.gitignore` excludes `.venv*/ data/ runs/ logs/ *.pdf __pycache__/ .claude/` — only code + `.md`
-  docs are tracked. **Deleting data is NOT recoverable via git** (it's gitignored); FEM/IPC data is
-  expensive to regenerate — be careful with deletes.
+- `.gitignore` excludes `.venv*/ data/ runs/ logs/ *.pdf *.log __pycache__/ .claude/ codex/
+  scratchpad/` plus transient Isaac progress markers (`fem_progress*.txt`, `sim_grasp_*progress.txt`)
+  and the local `litellm-nvidia.yaml` — only code + `.md` docs are tracked. **Deleting data is NOT
+  recoverable via git** (it's gitignored); FEM/IPC data is expensive to regenerate — be careful with
+  deletes.
 - Canonical PhysX shear GT: `data/fem/shear_fine.npz` + `shear_coarse.npz`; paired chunks in
   `data/fem/chunks/`. IPC GT under `data/uipc/`.
 
