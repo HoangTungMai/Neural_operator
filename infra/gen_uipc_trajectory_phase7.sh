@@ -3,14 +3,14 @@
 #
 # Produces a small endpoint-controlled dataset where each endpoint is repeated
 # with three loading paths (linear/ortho/reverse). Output keeps the legacy
-# trajectory schema expected by novbts.operator.loading_history:
+# trajectory schema expected by novbts.research.fno.loading_history:
 #   params, coords, disp, mode, disp_traj, traj_fracs, load_mode, load_mode_names
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IMG="${IMG:-isaac-lab-tacex:latest}"
 PY="${PY:-.venv-gate2/bin/python}"
-SCRIPT="/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py"
+SCRIPT="/work/src/novbts/research/groundtruth/tacex_uipc_extract_shear.py"
 OUT_ROOT="${OUT_ROOT:-data/uipc/trajectory_phase7}"
 DATA_TAG="${DATA_TAG:-REALISTIC}"
 RUN_OUT_DIR="${RUN_OUT_DIR:-phase7}"
@@ -107,25 +107,25 @@ docker run --rm --gpus all \
 docker run --rm -v "$PWD":/work --entrypoint bash "$IMG" \
   -c "chown -R $(id -u):$(id -g) /work/$OUT_ROOT" >/dev/null 2>&1
 
-"$PY" -m novbts.groundtruth.aggregate_uipc_replicates \
+"$PY" -m novbts.research.groundtruth.aggregate_uipc_replicates \
   --sweep-dir "$SWEEP_DIR" \
   --out "$FINAL_NPZ" \
   --expect-reps "$KREPS" \
   --test-size "$TEST_SIZE" \
   --mode-shear-scale "$SHEAR_SCALE"
 
-"$PY" -m novbts.operator.loading_history \
+"$PY" -m novbts.research.fno.loading_history \
   --data "$FINAL_NPZ" \
   --n-test "$TEST_SIZE" \
   --epochs 120 \
   --modes 12 \
   --lr 0.001
 
-"$PY" -m novbts.sensor.temporal \
+"$PY" -m novbts.simulation.sensor.temporal \
   --data "$FINAL_NPZ" \
   --out-dir "$RUN_OUT_DIR"
 
-"$PY" -m novbts.sensor.temporal_compare \
+"$PY" -m novbts.simulation.sensor.temporal_compare \
   --data "$FINAL_NPZ" \
   --fno-data data/uipc/shear_res24_avg_swept_REALISTIC.npz \
   --fno-epochs 80 \

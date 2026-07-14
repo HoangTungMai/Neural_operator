@@ -6,14 +6,14 @@ numbers are produced on the corrected-BC realistic **IPC/UIPC** thin-gel dataset
 
 `data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz`
 
-The headline benchmark is **not** `operator/field2field.py`. It is
-`operator/fem_benchmark.py` run with `--field-model lr_fno`, which loads the
+The headline benchmark is **not** `research/fno/field2field.py`. It is
+`research/fno/fem_benchmark.py` run with `--field-model lr_fno`, which loads the
 IPC/UIPC `.npz` directly and reports the paper metrics (for example LR-FNO
 `0.060 / 1.5 deg` and `9.0x` over the per-point MLP). The main reported model is
-**LR-FNO** (`operator/hybrid_fno.py`: FNO trunk + lightweight local refinement,
+**LR-FNO** (`research/fno/hybrid_fno.py`: FNO trunk + lightweight local refinement,
 U-FNO family, Wen et al. 2022); the plain FNO trunk is kept as an ablation.
 
-`operator/field2field.py` is retained as an analytic Hertz--Mindlin
+`research/fno/field2field.py` is retained as an analytic Hertz--Mindlin
 proof-of-concept of the same field-to-field framing. It should not be used to
 reproduce the paper headline table.
 
@@ -47,27 +47,16 @@ as `*.FNO_MAIN.*`.
 
 ```
 src/novbts/
-  models.py              FNO / MLP / DeepONet / SpectralConv2d (shared defs)
   paths.py               central path config (ROOT/DATA/RUNS/DOCS)
-  groundtruth/
-    hertz_mindlin.py     analytic Hertz + Cattaneo–Mindlin GT + validator
-    data_gen.py          analytic dataset generator (train/test/OOD splits)
-    isaac_extract_normal.py   PhysX-FEM GT, normal indentation  (runs in Docker)
-    isaac_extract_shear.py    PhysX-FEM GT, shear/slip          (runs in Docker)
-    tacex_uipc_extract_shear.py IPC/UIPC thin-gel shear generator (TacEx-style)
-  operator/
-    fem_benchmark.py     PAPER HEADLINE benchmark on realistic IPC/UIPC .npz (--field-model lr_fno)
-    hybrid_fno.py        LR-FNO (main model) / U-FNO-style defs + 5-seed multi-model benchmark
-    vbts_baselines.py    VBTS/classical/neural baseline bakeoff on IPC/UIPC GT
-    field2field.py       analytic field→field PoC (Hertz--Mindlin, not paper headline)
-    param2field.py       param→field framing (ablation) + slip heads
-    eval_rq.py           RQ1–RQ3 evaluation (accuracy / generalization / speed)
-    fem_train_compare.py train on coarse- vs fine-mesh FEM GT, eval on fine
-  validation/
-    validate_gt.py       PhysX-FEM vs Hertz–Mindlin agreement
-    validate_shear.py    shear GT sanity / saturation signal
-    compare_shear.py     coarse vs fine shear GT (stick-radius / resolution)
-  report/make_pdf.py     render the Phase-3 report to PDF (-> docs/)
+  research/              FNO research and reproducibility pipeline
+    models.py            FNO / MLP / DeepONet / SpectralConv2d definitions
+    fno/                 training, benchmarks, ablations, policy experiments
+    groundtruth/         analytic/IPC/FEM data generation and aggregation
+    validation/          ground-truth validation and comparison utilities
+    report/              paper figures, reports, and slide generators
+  simulation/            reusable tactile simulation framework
+    runtime/             Isaac runtime, robot/grasp demos, FNO deployment
+    sensor/              marker camera, realism, calibration, tactile env
 
 infra/                   Isaac/IPC generation scripts + realistic acceptance checker
 scripts/archive/         frozen one-off probes & superseded scripts
@@ -88,15 +77,15 @@ Paths resolve from the repo root via `novbts.paths`, so modules run from any CWD
 ## Run (no Isaac needed)
 
 ```bash
-python -m novbts.operator.fem_benchmark --field-model lr_fno \
+python -m novbts.research.fno.fem_benchmark --field-model lr_fno \
   --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
                                                 # paper headline RQ1/RQ2/RQ3 on IPC/UIPC GT
-python -m novbts.operator.hybrid_fno            # 5-seed FNO/U-Net/LR-FNO/U-FNO benchmark
-python -m novbts.operator.vbts_baselines \
+python -m novbts.research.fno.hybrid_fno            # 5-seed FNO/U-Net/LR-FNO/U-FNO benchmark
+python -m novbts.research.fno.vbts_baselines \
   --data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz
                                                 # paper baseline bakeoff on same IPC/UIPC split
-python -m novbts.operator.field2field           # analytic field→field PoC only
-python -m novbts.report.make_kse_figs           # regenerate KSE figures from current runs/
+python -m novbts.research.fno.field2field           # analytic field→field PoC only
+python -m novbts.research.report.make_kse_figs           # regenerate KSE figures from current runs/
 python infra/verify_bc_reground.py              # acceptance check for data/downstream/paper
 ```
 

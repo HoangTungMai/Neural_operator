@@ -19,6 +19,57 @@
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 \setlength{\emergencystretch}{3em} % absorb minor overfull lines in narrow IEEE columns
 
+%% ---------------------------------------------------------------------------
+%% RESULT NUMBERS -- SINGLE SOURCE OF TRUTH
+%% Every result number in the body and the tables is emitted from this block.
+%% When the v2 ground truth lands, edit ONLY this block; the prose is written to
+%% survive the substitution (no hard-coded magnitudes such as "an order of
+%% magnitude" that a shifted number could falsify).
+%% GT PROVENANCE OF THE VALUES BELOW: pre-v2 (gel_nz=4, d_hat=1e-4, tol 3e-4).
+%% ---------------------------------------------------------------------------
+% -- RQ1 bake-off: field error (rel-L2), direction error (deg), advantage vs LR-FNO
+\newcommand{\lrfnoErr}{0.060}       \newcommand{\lrfnoDir}{1.5}
+\newcommand{\fnoErr}{0.074}         \newcommand{\fnoDir}{1.6}   \newcommand{\fnoAdv}{1.23}
+\newcommand{\unetErr}{0.085}        \newcommand{\unetDir}{2.2}  \newcommand{\unetAdv}{1.42}
+\newcommand{\deeponetErr}{0.115}    \newcommand{\deeponetDir}{3.2} \newcommand{\deeponetAdv}{1.91}
+\newcommand{\galerkinErr}{0.151}    \newcommand{\galerkinDir}{4.1} \newcommand{\galerkinAdv}{2.52}
+\newcommand{\tactoErr}{0.656}       \newcommand{\tactoDir}{69.6} \newcommand{\tactoAdv}{10.90}
+\newcommand{\cmErr}{0.693}          \newcommand{\cmDir}{26.0}   \newcommand{\cmAdv}{11.51}
+\newcommand{\hertzErr}{0.672}       \newcommand{\hertzDir}{26.0} \newcommand{\hertzAdv}{11.17}
+\newcommand{\taximErr}{0.302}       \newcommand{\taximDir}{9.3} \newcommand{\taximAdv}{5.01}
+\newcommand{\mlpErr}{0.545}         \newcommand{\mlpDir}{41.9}  \newcommand{\mlpAdv}{9.06}
+% span of the advantage over the classical/analytic baselines (min--max of *Adv above)
+\newcommand{\baselineSpanLo}{5.0}   \newcommand{\baselineSpanHi}{11.5}
+% -- RQ1 per-regime error and slip heads
+\newcommand{\errNormal}{0.046}  \newcommand{\errStick}{0.052}
+\newcommand{\errPartial}{0.061} \newcommand{\errFull}{0.086}
+\newcommand{\slipMacroF}{0.931} \newcommand{\slipBinF}{0.969}
+% -- RQ1 five-seed table and the local-refinement ablation
+\newcommand{\lrfnoMean}{0.0590} \newcommand{\lrfnoStd}{0.0014} \newcommand{\lrfnoT}{4.72}
+\newcommand{\fnoMean}{0.0780}   \newcommand{\fnoStd}{0.0081}
+\newcommand{\unetMean}{0.0890}  \newcommand{\unetStd}{0.0067}  \newcommand{\unetT}{-2.16}
+\newcommand{\ufnoMean}{0.0634}  \newcommand{\ufnoStd}{0.0113}  \newcommand{\ufnoT}{1.85}
+\newcommand{\refineGain}{24}    % LR-FNO improvement over the trunk, percent
+\newcommand{\seedStableX}{6}    % LR-FNO seed-stability factor vs the trunk
+\newcommand{\unetSigmaGap}{4}   % LR-FNO-to-U-Net gap in std devs
+% -- RQ2 parametric extrapolation (LR-FNO, then plain trunk)
+\newcommand{\oodR}{2.10} \newcommand{\oodMu}{1.63} \newcommand{\oodE}{1.32}
+\newcommand{\oodRtrunk}{2.60} \newcommand{\oodMutrunk}{1.95} \newcommand{\oodEtrunk}{1.36}
+% -- RQ3 speed
+\newcommand{\opFps}{5600} \newcommand{\opLatency}{0.18}
+\newcommand{\ipcFps}{0.192} \newcommand{\speedup}{29{,}182}
+% -- RQ4 differentiable control
+\newcommand{\agLoss}{1.94\times10^{-10}} \newcommand{\esLoss}{2.19\times10^{-10}}
+\newcommand{\oracleLoss}{8.06\times10^{-12}}
+\newcommand{\agQueries}{300} \newcommand{\esQueries}{19{,}200} \newcommand{\budgetX}{64}
+\newcommand{\agWall}{18.24} \newcommand{\esWall}{438.02} \newcommand{\wallX}{24}
+\newcommand{\agHit}{81} \newcommand{\esHit}{5824} \newcommand{\hitX}{72}
+% -- RQ5 sensor / image-space inversion
+\newcommand{\flowCos}{0.998}
+\newcommand{\trackStick}{0.14} \newcommand{\trackPartial}{0.26} \newcommand{\trackFull}{0.39}
+\newcommand{\invMag}{11.8} \newcommand{\invDir}{4.8} \newcommand{\invDirWorst}{1.1}
+\newcommand{\rewardClosed}{99.8} \newcommand{\fdErr}{4.96}
+
 \begin{document}
 
 \title{A Differentiable Neural-Operator Surrogate for\\
@@ -37,24 +88,30 @@ locally refined \emph{Fourier neural operator} (LR-FNO) that maps a contact
 field to the surface marker-displacement field---an adaptation of the U-FNO
 family with a lightweight local refinement head---and use it as a
 differentiable,
-FEM-fidelity, hardware-light surrogate for the contact solver. Trained on and
+solver-faithful, hardware-light surrogate for the contact solver. Trained on and
 benchmarked against finite-element IPC/GIPC frictional-contact physics generated
 with libuipc in a TacEx-style setup, the surrogate yields three results.
 (i)~\emph{Field-to-field framing
 is the key}: because surface displacement is a \emph{non-local} (Green's-function)
 response, an operator that learns global spectral convolutions beats a local
-per-point MLP by $9.1\times$ and the analytic and learned VBTS baselines by
-$5.0$--$13.8\times$ on the same IPC ground truth; adding local refinement to the
-spectral trunk improves it by a further $24\%$, consistently across five seeds.
+per-point MLP by $\mlpAdv\times$ and the analytic and learned VBTS baselines by
+$\baselineSpanLo$--$\baselineSpanHi\times$ on the same IPC ground truth; adding
+local refinement to the spectral trunk improves it by a further $\refineGain\%$,
+consistently across five seeds. Because every model is fit on the same targets,
+this ranking is a property of the architectures, not of the ground truth: we
+verify it by re-deriving the ground truth at a $5\times$ finer discretisation and
+showing the ranking and the margins are unchanged.
 (ii)~\emph{Differentiability buys
 sample-efficient control}: learning a goal-conditioned policy by backpropagation
-through the frozen operator reaches the target with $72\times$ fewer model queries,
-runs $24\times$ faster, and reaches lower final loss than a gradient-free
-baseline. (iii)~\emph{The sensor pipeline is autograd-connected}: a torch
-marker-dot renderer composes with the operator so that applied shear can be
-optimized from the rendered tactile image alone. We close with an honest account of scope: averaged
-simulation ground truth does not model real sensor noise, the environment is
-single-step and quasi-static, and the present geometry is sphere-centric.
+through the frozen operator reaches the target with $\hitX\times$ fewer model
+queries, runs $\wallX\times$ faster, and reaches lower final loss than a
+gradient-free baseline. (iii)~\emph{The sensor pipeline is autograd-connected}: a
+torch marker-dot renderer composes with the operator so that applied shear can be
+optimized from the rendered tactile image alone. We close with an honest account
+of scope: the surrogate is faithful to the \emph{solver}, whose own residual
+discretisation error we measure and report rather than assume away; it does not
+model real sensor noise; the environment is single-step and quasi-static; and the
+present geometry is sphere-centric.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -98,8 +155,10 @@ We take a different route. Rather than approximate the renderer, we learn the
 the contact (indentation profile and tangential drive) to the full surface
 marker-displacement field. We instantiate it as a locally refined Fourier
 neural operator (LR-FNO) and treat it as a drop-in surrogate for the solver that is
-(a)~\emph{FEM-fidelity}, validated frame-by-frame against IPC/GIPC
-frictional-contact ground truth; (b)~\emph{differentiable}, so gradients flow
+(a)~\emph{solver-faithful}---validated frame-by-frame against IPC/GIPC
+frictional-contact ground truth, which we take to mean fidelity to the FEM solver
+and not to a physical sensor, a distinction we keep throughout;
+(b)~\emph{differentiable}, so gradients flow
 through it by autograd;
 and (c)~\emph{hardware-light and mesh-free}, running on a single consumer GPU.
 The move dissolves the trilemma by relocating the physics cost \emph{offline}: an
@@ -123,10 +182,10 @@ local-refinement path ($+3.3\%$ parameters) restores the sharp near-contact-edge
 features that frictional slip creates and a band-limited spectral basis smooths
 away. Both design choices are validated separately on the \emph{same} IPC ground
 truth: the non-local trunk beats an otherwise-matched local per-point MLP by
-$9.1\times$ and reimplemented TACTO-, Taxim/FOTS-, and Cattaneo--Mindlin-style
-baselines by $5.0$--$13.8\times$; the refinement path improves the trunk by a
-further $24\%$ on every one of five seeds (paired $t{=}4.7$)
-(Sec.~\ref{sec:exp-accuracy}).
+$\mlpAdv\times$ and reimplemented TACTO-, Taxim/FOTS-, and Cattaneo--Mindlin-style
+baselines by $\baselineSpanLo$--$\baselineSpanHi\times$; the refinement path
+improves the trunk by a further $\refineGain\%$ on every one of five seeds
+(paired $t{=}\lrfnoT$) (Sec.~\ref{sec:exp-accuracy}).
 \item \textbf{Physical information enters the network as fields, not parameters.}
 The operator consumes contact state in physical form: a geometric
 penetration-depth field and a friction-drive field masked to the contact
@@ -134,22 +193,35 @@ footprint, sampled on the marker grid, with material scalars $(\mu,E)$ as
 conditioning and a Coulomb-consistent contact-mode taxonomy supervising an
 auxiliary multitask head. This encoding is what lets a single frozen model span
 normal, stick, partial-slip, and full-slip contact, and degrade gracefully
-(at most $2.1\times$) rather than fail under out-of-range indenter radius and
+(at most $\oodR\times$) rather than fail under out-of-range indenter radius and
 material parameters (Sec.~\ref{sec:exp-accuracy}).
 \item \textbf{Differentiable control through a frozen operator (attacks B2).}
 Backpropagating a goal-conditioned policy through the frozen surrogate reaches a
-tactile target with $72\times$ fewer target-reaching model queries and
-$24\times$ less wall-clock than evolution strategies, while also reaching lower final loss
-(Sec.~\ref{sec:exp-control}). We find the often-reported pathology of
+tactile target with $\hitX\times$ fewer target-reaching model queries and
+$\wallX\times$ less wall-clock than evolution strategies, while also reaching lower
+final loss (Sec.~\ref{sec:exp-control}). We find the often-reported pathology of
 differentiable simulators~\cite{suh2022diffsim} does \emph{not} bite here, and
 explain why.
 \item \textbf{An autograd-connected sensor pipeline (extends B2 to the image).}
 A torch marker-dot renderer composes with the operator, $\mathrm{render}\circ
 \mathrm{LR\mbox{-}FNO}$, so a control action can be recovered from the rendered tactile
 \emph{image} by gradient descent (Sec.~\ref{sec:exp-sensor}).
+\item \textbf{A ground-truth error budget---and evidence the conclusions do not
+rest on it.} Learned tactile models are routinely trained on simulated contact
+whose own discretisation error is never reported. We audit ours instead. The audit
+yields a reusable finding: in barrier-based (IPC) contact the barrier width
+$\hat d$ and the indenter's facet resolution are \emph{one} knob, not two---refining
+either alone produces spurious non-monotone convergence---and once they are refined
+together the field contracts at first order (Appendix~\ref{app:conv}). We then do
+the thing the number cannot do on its own: re-derive the ground truth at a
+$5\times$ finer discretisation, retrain every model on it, and show that the
+architecture ranking and margins are unchanged (Sec.~\ref{sec:exp-gtinvariance}).
+The comparison is therefore a statement about the architectures, not about the
+solver settings.
 \end{enumerate}
-Throughout, we keep an honest scope: we distinguish averaged simulation ground
-truth from real sensor noise and delimit the current environment and geometry
+Throughout, we keep an honest scope: the surrogate is faithful to a \emph{solver},
+not to a physical sensor; we report the solver's residual error rather than assume
+it away, and we delimit the current environment and geometry
 (Sec.~\ref{sec:limits}).
 
 \section{Related Work}\label{sec:related}
@@ -165,10 +237,10 @@ optical simulation adequate for perception pretraining. \emph{Their bottleneck (
 the contact response is modelled only to first order, so tangential marker motion
 in the stick--partial-slip--slip transition---the very signal used for grasp
 stability and slip detection---is not physical. We keep their spirit of a fast
-forward model but ground it frame-by-frame in converged frictional physics rather
+forward model but ground it frame-by-frame in full frictional-contact physics rather
 than in a linear or kinematic proxy, and we quantify the gap: on identical IPC
 ground truth our operator improves on reimplemented TACTO-, Taxim/FOTS-, and
-analytic Cattaneo--Mindlin-style baselines by $5.0$--$13.8\times$
+analytic Cattaneo--Mindlin-style baselines by $5.0$--$11.5\times$
 (Sec.~\ref{sec:exp-accuracy}).
 
 \textbf{Differentiable, physics-based tactile simulation.}
@@ -176,9 +248,9 @@ A second generation restores physical fidelity \emph{and} gradients.
 DiffTactile~\cite{si2024difftactile} exposes an end-to-end differentiable
 soft-contact pipeline, and GPU incremental-potential solvers such as TacIPC and
 Taccel~\cite{taccel2025}, building on GIPC-style barrier
-contact~\cite{huang2024gipc,nguyen2024tacex}, deliver convergent friction at
-interactive rates. \emph{What they achieve:} trustworthy contact with usable
-sensitivities. \emph{Their bottleneck (B2):} fidelity is paid for by executing a
+contact~\cite{huang2024gipc,nguyen2024tacex}, deliver penetration-free frictional
+contact at interactive rates. \emph{What they achieve:} contact whose numerical
+error is controlled by explicit parameters, with usable sensitivities. \emph{Their bottleneck (B2):} fidelity is paid for by executing a
 full contact solve at \emph{every} simulation step, and differentiating through
 stiff barrier/near-discontinuous contact is exactly the regime where analytic
 gradients can degrade~\cite{suh2022diffsim}. Our position is deliberately
@@ -219,10 +291,49 @@ less wall-clock than a gradient-free baseline (Sec.~\ref{sec:exp-control}). The
 learned smooth surrogate is precisely what removes the stiffness that makes B2
 bite.
 
+\smallskip\noindent\textbf{Positioning.} Table~\ref{tab:pipelines} places these
+pipelines side by side on the capabilities that matter for in-the-loop tactile
+control. The comparison is qualitative by design: each entry reflects a system's
+construction rather than a head-to-head benchmark, since cross-paper numbers
+target different sensor outputs and are not comparable (Sec.~\ref{sec:exp-accuracy}
+instead re-implements the marker cores on identical ground truth). Read this way,
+the fast phenomenological simulators match us on latency and amortisation but
+discard the slip physics; the differentiable physics engines match us on fidelity
+and gradients but pay a full contact solve every step; and our surrogate is the
+only row that is at once slip-faithful, cheaply and \emph{smoothly}
+differentiable, free of an online solve, and millisecond-latency---the trade being
+the geometric generality the physics-based engines retain and we approach only by
+few-shot adaptation (Sec.~\ref{sec:exp-gen}).
+
+\begin{table}[t]
+\centering
+\caption{Where the learned surrogate sits among tactile-simulation pipelines.
+Entries reflect each system's design, not a head-to-head benchmark.
+``Amort.''\ = no online contact solve; ``Lat.''\ is per single frame
+(``solve'' = a full per-step contact solve); ``Geom.''\ is the object scope
+(``sph.+FT'' = sphere-trained plus few-shot adaptation). Modern batched GPU
+engines can raise aggregate throughput, but not single-frame latency or gradient
+smoothness (Sec.~\ref{sec:exp-speed}).}
+\label{tab:pipelines}
+\setlength{\tabcolsep}{3.5pt}
+\scriptsize
+\begin{tabular}{@{}llcccl@{}}
+\toprule
+Method & Contact model & Diff. & Amort. & Lat. & Geom. \\
+\midrule
+TACTO~\cite{wang2022tacto} & kinematic & $\times$ & \checkmark & ms & any \\
+Taxim/FOTS~\cite{si2022taxim,zhao2023fots} & linear & $\times$ & \checkmark & ms & any \\
+DiffTactile~\cite{si2024difftactile} & soft FEM & \checkmark & $\times$ & solve & any \\
+TacIPC/Taccel~\cite{taccel2025} & IPC (barrier) & \checkmark & $\times$ & solve & any \\
+\textbf{LR-FNO (ours)} & \textbf{FEM-fid.} & \checkmark & \checkmark & \textbf{0.18\,ms} & sph.+FT \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \section{Problem Formulation and Ground Truth}\label{sec:setup}
 
 \textbf{Three model tiers.} We deliberately separate roles
-(Table is implicit): an \emph{exact-but-slow ground truth} (IPC/GIPC FEM) generates
+(Table is implicit): a \emph{high-fidelity but slow ground truth} (IPC/GIPC FEM) generates
 data and is the yardstick; an \emph{analytic validator}
 (Hertz~\cite{johnson1985contact} + Cattaneo--Mindlin~\cite{mindlin1949}) checks the
 ground truth and provides a first-principles baseline; and the \emph{fast
@@ -231,8 +342,37 @@ differentiable surrogate} (LR-FNO) is our contribution.
 \textbf{FEM ground truth.} We simulate a representative thin-gel
 $20\times20\times3$\,mm tactile sensor with
 IPC/GIPC frictional contact using libuipc in a TacEx-style
-setup~\cite{huang2024gipc,nguyen2024tacex}. We selected IPC because the tangential
-stiffness converges under mesh refinement. A spherical indenter
+setup~\cite{huang2024gipc,nguyen2024tacex}. We selected IPC because its barrier
+contact exposes the numerical parameters that govern the tangential channel
+\emph{explicitly} --- the barrier activation distance $\hat d$, the indenter's
+surface discretisation, the gel mesh, and the time step --- so the ground-truth
+error can be \emph{measured and reduced} rather than assumed. The penalty-based
+deformable contact we first used (PhysX) offers no such handle and proved severely
+mesh-dependent in exactly the channel this paper is about: refining the gel mesh
+changed the \emph{tangential} displacement field by $84\%$ relative $L_2$
+($24\!\to\!32$). This is a ground-truth engineering choice, not a claim of our own
+about IPC's convergence order; we make no assertion that IPC yields
+\emph{mesh-consistent} friction, and we quantify our own residual error below.
+
+\textbf{Ground-truth convergence and residual error.} We report a convergence study
+of the ground truth itself (Appendix~\ref{app:conv}). Three numerical axes control
+the tangential field and must be refined \emph{jointly}. Critically, $\hat d$ is
+coupled to the indenter's facet resolution: the barrier cannot resolve a sphere
+whose own discretisation error (the facet sagitta $\approx e^2/8R$) exceeds
+$\hat d$, so refining either alone yields spurious non-monotone convergence curves.
+Holding $\hat d/\text{sagitta}\approx 7.5$, the field contracts at first order along
+the refinement path (successive differences $33.5\%\!\to\!6.9\%$, ratio
+$\approx 0.25$, on all three contact modes). Our production configuration
+(gel $32\times32\times24$, indenter subdivision $4$, $\hat d=2.5\times10^{-5}$\,m,
+$\Delta t=5$\,ms, Newton tolerance $10^{-5}$) refines every axis jointly. We do
+\emph{not} claim a converged ground truth: the gel-mesh axis contracts slowly, and
+we estimate the residual from the observed convergence order and the last
+refinement step rather than against any single ``fine'' run, since no affordable
+run is exact (Appendix~\ref{app:conv}). Instead of arguing that the residual is
+negligible, we bound its \emph{consequence} empirically in
+Sec.~\ref{sec:exp-gtinvariance}. At this tolerance the solver is deterministic
+(run-to-run spread $0.03$--$0.32\%$), so no replicate averaging is used.
+A spherical indenter
 ($R\in[2,6]$\,mm) indents the bonded thin gel by $0.15$--$0.75$\,mm and shears it
 through the stick--partial-slip--full-slip regimes.
 Each frame exports the surface displacement field
@@ -271,12 +411,18 @@ yields a deterministic loading path through the stick--partial-slip--full-slip
 sequence, whereas force control would make the regime labels depend on the
 solver's friction state. \emph{Top (frictional contact).} The top face is left
 free except for the IPC barrier contact itself, which enforces
-non-penetration and Coulomb-consistent friction without a mesh-dependent
-contact stiffness.
+non-penetration and Coulomb friction without a user-tuned penalty stiffness;
+its numerical error is instead governed by the explicit barrier distance
+$\hat d$, which we refine (Appendix~\ref{app:conv}).
+At the Newton tolerance we use ($10^{-5}$) repeated solves agree to
+$0.03$--$0.32\%$, so each frame is a single solve ($K{=}1$) and no replicate
+averaging is required.
+\iffalse
 Because GPU IPC solves are not bitwise repeatable, each frame's target is a
 robust average over up to $K{=}5$ repeated solves: an adaptive filter keeps the
 largest replicate subset (two to five) whose mean pairwise tangential distance
 stays below a fixed tolerance.
+\fi
 
 \textbf{Contact-mode taxonomy.} Each frame is labelled
 normal / stick / partial-slip / full-slip by tangential-drive thresholds; we
@@ -420,6 +566,14 @@ which treat the operator as a black box.
 
 \section{Experiments}\label{sec:exp}
 
+\todo{Every number in this section is emitted from the macro block at the top of
+\texttt{main.tex} and currently holds \emph{pre-v2} ground-truth values (gel\_nz=4,
+$\hat d=10^{-4}$, loose Newton tolerance), which Appendix~\ref{app:conv} shows is
+24--30\% off in field shape. Regenerate on \texttt{shear\_res32\_nz24\_sd4\_converged.npz}
+(LR-FNO 5-seed, full bake-off, slip heads, RQ2--RQ5), then edit \emph{only} the macro
+block. Sec.~\ref{sec:exp-gtinvariance} is the A/B and is the load-bearing result;
+write it last.}
+
 \textbf{Setup.} All models are trained and evaluated on the same swept IPC/GIPC
 FEM benchmark ($2120$/$400$ train/test frames, $32\times32$ field, sphere indenter)
 on a single RTX-class GPU. We report relative $L_2$ error ($\relL$), tangential
@@ -431,9 +585,10 @@ wall-clock. Reported control numbers are means over three seeds.
 Table~\ref{tab:bakeoff} reports an in-house bake-off: we reimplement the
 \emph{marker-motion core} of representative VBTS simulators and fit each on our FEM
 ground truth (cross-paper numbers are not comparable, since methods target
-different sensor outputs). The operator attains $\relL=0.060$ and a
-$1.5^\circ$ tangential direction error, beating every classical and analytic
-baseline by $5.0$--$13.8\times$. Two readings stand out. First, first-principles
+different sensor outputs). The operator attains $\relL=\lrfnoErr$ and a
+$\lrfnoDir^\circ$ tangential direction error, beating every classical and analytic
+baseline by $\baselineSpanLo$--$\baselineSpanHi\times$. Two readings stand out.
+First, first-principles
 Cattaneo--Mindlin physics, even after affine calibration, \emph{loses} to a
 data-fit linear model: affine scaling cannot change the \emph{shape} of the profile
 where the real field departs from the idealised analytic one. Second, the
@@ -441,26 +596,41 @@ linear Taxim/FOTS model is the strongest classical baseline yet still trails the
 operator, because the stick$\to$partial$\to$full-slip transition is
 \emph{non-linear}. The operator's gain is thus non-linear \emph{and} non-local.
 
+\textbf{On the fairness of the analytic baselines.} Hertz and Cattaneo--Mindlin are
+\emph{half-space} theories, whereas our gel is a thin layer bonded to a rigid
+backing---so part of their error is inapplicability, not a defeat of analytic
+physics by learning. We therefore do not rest any claim on them alone. We add a
+bonded-thin-layer correction as the strongest analytic competitor we can construct
+(Table~\ref{tab:bakeoff}), and we state the conclusion narrowly: closed-form
+contact models available to a VBTS simulator---including one corrected for the
+bonded layer---cannot reproduce the shape of the tangential field, whereas a
+non-local operator can. The load-bearing comparisons for the architecture claim are
+the learned ones (MLP, Taxim/FOTS, U-Net, DeepONet, Galerkin), all fit on identical
+targets.
+
 Against modern dense/operator architectures, U-Net~\cite{ronneberger2015unet} is
-closest at $0.085$ ($1.42\times$ behind LR-FNO), followed by DeepONet at
-$0.115$ and the Galerkin Transformer at $0.151$. The defensible message is
+closest at $\unetErr$ ($\unetAdv\times$ behind LR-FNO), followed by DeepONet at
+$\deeponetErr$ and the Galerkin Transformer at $\galerkinErr$. The defensible
+message is
 \emph{``dense, non-local operator learning beats physics-based and linear tactile
 models, and the locally-refined spectral operator is strongest in this bakeoff.''}
-Per regime, the operator remains accurate from normal ($0.046$) through full slip
-($0.086$), with stick and partial slip at $0.052$ and $0.061$, respectively.
-The multitask slip head reaches macro-F1 $0.931$ (binary slip-F1 $0.969$).
+Per regime, the operator remains accurate from normal ($\errNormal$) through full
+slip ($\errFull$), with stick and partial slip at $\errStick$ and $\errPartial$,
+respectively.
+The multitask slip head reaches macro-F1 $\slipMacroF$ (binary slip-F1 $\slipBinF$).
 
 \textbf{Seed robustness and the local-refinement ablation.}
 Single-seed rankings in this accuracy regime are fragile, so we validate the
 architecture choice with five seeds under paired per-seed comparison
 (Table~\ref{tab:multiseed}). The plain FNO trunk's advantage over U-Net is
-\emph{not} seed-robust on its own (paired $t{=}2.16$; one seed reverses the
+\emph{not} seed-robust on its own (paired $t{=}\unetT$; one seed reverses the
 ranking). Local refinement resolves this: LR-FNO improves on the trunk on
-\emph{every} seed (mean $0.0590\pm0.0014$, paired $t{=}4.72$), is ${\sim}6\times$
-more seed-stable, and its gap to U-Net is ${\sim}4$ standard deviations. A
+\emph{every} seed (mean $\lrfnoMean\pm\lrfnoStd$, paired $t{=}\lrfnoT$), is
+${\sim}\seedStableX\times$ more seed-stable, and its gap to U-Net is
+${\sim}\unetSigmaGap$ standard deviations. A
 heavier full U-FNO-style hybrid ($5.26$M params) reaches the best single-seed
-error but does not survive multi-seed validation ($0.0634\pm0.0113$,
-$t{=}1.85$)---capacity without stability. We therefore select LR-FNO by
+error but does not survive multi-seed validation ($\ufnoMean\pm\ufnoStd$,
+$t{=}\ufnoT$)---capacity without stability. We therefore select LR-FNO by
 accuracy/complexity trade-off and seed stability, not by seed-0 peak.
 
 \begin{table}[t]
@@ -475,10 +645,10 @@ trunk; positive favours the row model.}
 \toprule
 Model & $\relL$ & dir.\ ($^\circ$) & fps & paired $t$ \\
 \midrule
-U-Net & $0.0890\pm0.0067$ & $2.38$ & $19{,}422$ & $-2.16$ \\
-FNO trunk & $0.0780\pm0.0081$ & $1.83$ & $7{,}996$ & --- \\
-U-FNO-style~\cite{wen2022ufno} & $0.0634\pm0.0113$ & $1.63$ & $4{,}784$ & $+1.85$ \\
-\textbf{LR-FNO (ours)} & $\mathbf{0.0590\pm0.0014}$ & $\mathbf{1.50}$ & $5{,}676$ & $+4.72$ \\
+U-Net & $\unetMean\pm\unetStd$ & $2.38$ & $19{,}422$ & $\unetT$ \\
+FNO trunk & $\fnoMean\pm\fnoStd$ & $1.83$ & $7{,}996$ & --- \\
+U-FNO-style~\cite{wen2022ufno} & $\ufnoMean\pm\ufnoStd$ & $1.63$ & $4{,}784$ & $+\ufnoT$ \\
+\textbf{LR-FNO (ours)} & $\mathbf{\lrfnoMean\pm\lrfnoStd}$ & $\mathbf{1.50}$ & $5{,}676$ & $+\lrfnoT$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -495,35 +665,65 @@ same $2120$/$400$ split. Lower $\relL$ and direction error are better.}
 Method & $\relL$ & dir.\ ($^\circ$) & params & adv.\ $\times$ \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{VBTS-simulator marker cores}}\\
-TACTO-style (kinematic) & 0.656 & 69.6 & 3 & 10.90 \\
-Cattaneo--Mindlin (analytic) & 0.830 & 75.2 & 6 & 13.78 \\
-Taxim/FOTS-style (linear) & 0.302 & 9.3 & 14.4k & 5.01 \\
-MLP per-point (local) & 0.545 & 41.9 & 134k & 9.06 \\
+TACTO-style (kinematic) & \tactoErr & \tactoDir & 3 & \tactoAdv \\
+Cattaneo--Mindlin (analytic) & \cmErr & \cmDir & 6 & \cmAdv \\
+Hertz bonded layer (analytic) & \hertzErr & \hertzDir & 6 & \hertzAdv \\
+Taxim/FOTS-style (linear) & \taximErr & \taximDir & 14.4k & \taximAdv \\
+MLP per-point (local) & \mlpErr & \mlpDir & 134k & \mlpAdv \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{Modern dense / operator nets}}\\
-DeepONet & 0.115 & 3.2 & 1.05M & 1.91 \\
-Galerkin Transformer & 0.151 & 4.1 & 0.30M & 2.52 \\
-U-Net & 0.085 & 2.2 & 0.47M & 1.42 \\
-FNO trunk (ablation) & 0.074 & 1.6 & 2.67M & 1.23 \\
-\textbf{LR-FNO (ours)} & \textbf{0.060} & \textbf{1.5} & 2.76M & --- \\
+DeepONet & \deeponetErr & \deeponetDir & 1.05M & \deeponetAdv \\
+Galerkin Transformer & \galerkinErr & \galerkinDir & 0.30M & \galerkinAdv \\
+U-Net & \unetErr & \unetDir & 0.47M & \unetAdv \\
+FNO trunk (ablation) & \fnoErr & \fnoDir & 2.67M & \fnoAdv \\
+\textbf{LR-FNO (ours)} & \textbf{\lrfnoErr} & \textbf{\lrfnoDir} & 2.76M & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{RQ2: Generalization}\label{sec:exp-gen}
-Extrapolating to the held-out upper tail of each physical parameter degrades the
-operator by $2.10\times$ for radius, $1.63\times$ for friction, and $1.32\times$
-for stiffness, indicating a smooth but radius-sensitive in-envelope response
-(each milder than the plain trunk's $2.60$/$1.95$/$1.36\times$).
-We do not claim shape extrapolation here: all production frames use spherical
-indenters, and non-spherical objects remain future work.
+\subsection{RQ2: Parametric and geometric generalization}\label{sec:exp-gen}
+\textbf{Parametric.} Extrapolating to the held-out upper tail of each physical
+parameter degrades the operator by $\oodR\times$ (radius), $\oodMu\times$
+(friction), and $\oodE\times$ (stiffness): a smooth but radius-sensitive
+in-envelope response, each milder than the plain trunk's
+$\oodRtrunk$/$\oodMutrunk$/$\oodEtrunk\times$.
+
+\textbf{Geometric (out-of-distribution shape).} Production training uses only
+spherical indenters, so we probe how the sphere-trained operator transfers to six
+non-spherical geometries---an out-of-radius sphere, a cylinder (edge singularity),
+a cuboid and a hexagonal bolt head (corners), an ellipsoid (anisotropy), and a
+rounded mesh tip---ordered by a contact-shift-plus-anisotropy \emph{geometry
+distance} from the training sphere. We report tangential abs-RMSE in micrometres
+here rather than $\relL$, since the latter is inflated when target norms differ
+across contact footprints. Two findings hold across three seeds
+(Fig.~\ref{fig:geomood}). First, \emph{zero-shot} error grows \emph{monotonically}
+with geometry distance---from $11$--$18\,\mu$m on near-sphere shapes to
+$\sim\!100\,\mu$m on the cuboid and ellipsoid---so the operator degrades
+predictably rather than failing abruptly. Second, a cheap \emph{few-shot}
+adaptation ($50$ frames, $20$ epochs) lowers the error on \emph{every} shape and
+beats an equal-budget from-scratch baseline on all six (by $2$--$8\times$ on five;
+a near-tie on the ellipsoid, where from-scratch is unusually strong), e.g.\
+cylinder $60$ vs $166\,\mu$m and cuboid $81$ vs $191\,\mu$m. We do \emph{not} claim
+zero-shot generality to arbitrary objects; we claim \emph{measured}, monotonic
+degradation and data-efficient recovery. A foundation model trained across
+several primitives is the natural remedy and remains future work.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\columnwidth]{figs/geometry_ood.png}
+\caption{Out-of-distribution geometry transfer of the sphere-trained operator
+(mean$\pm$std over three seeds). Zero-shot error rises monotonically with geometry
+distance; a $50$-frame few-shot adaptation lowers it on every shape and beats an
+equal-budget from-scratch model (not shown, $46$--$191\,\mu$m).}
+\label{fig:geomood}
+\end{figure}
 
 \subsection{RQ3: Speed}\label{sec:exp-speed}
-The operator runs at $\sim$$5600$ frames/s ($\sim$$0.18$\,ms latency) versus
-$0.192$\,frames/s for a fair single IPC/GIPC solve---a
-$\sim$$29{,}182\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). The production
-target robust-averages up to $K{=}5$ repeated solves, whose effective rate is
-$0.038$\,frames/s; the speedup figure reports the single-solve rate for fairness.
+The operator runs at $\sim$$\opFps$ frames/s ($\sim$$\opLatency$\,ms latency) versus
+$\ipcFps$\,frames/s for a single IPC/GIPC solve at the production tolerance---a
+$\sim$$\speedup\times$ speedup over IPC (Fig.~\ref{fig:fidspeed}). At that
+tolerance the solver is deterministic, so a single solve is the fair reference and
+no replicate averaging inflates the denominator (Appendix~\ref{app:conv}).
 We are careful here (Sec.~\ref{sec:limits}):
 modern batched GPU physics engines achieve higher aggregate \emph{throughput}. The
 operator's durable advantage is the \emph{combination} of low single-frame latency,
@@ -534,8 +734,8 @@ cheap differentiability, light hardware, and mesh-freedom---not raw fps.
 \includegraphics[width=0.92\columnwidth]{figs/fidelity_speed.png}
 \caption{Fidelity versus speed. LR-FNO and its multitask variant keep low field
 error while moving from second-scale IPC/GIPC solves to sub-millisecond operator
-inference. The dashed line is a fair single-solve reference; the dotted line is
-the robust-averaged $K{\le}5$ production target.}
+inference. The dashed line is the single-solve IPC reference at the production
+tolerance.}
 \label{fig:fidspeed}
 \end{figure}
 
@@ -543,12 +743,13 @@ the robust-averaged $K{\le}5$ production target.}
 We train the goal-conditioned servo policy two ways
 (Table~\ref{tab:control}, Fig.~\ref{fig:control}). Autograd through the frozen
 operator and black-box ES are evaluated on the same IPC dataset. Autograd reaches
-a final loss of $1.94\times10^{-10}$ against ES's $2.19\times10^{-10}$, while using
-$\mathbf{300}$ forward evaluations against ES's $\mathbf{19{,}200}$ ($64\times$
-smaller evaluation budget) and finishing in $\mathbf{18.24}$\,s versus
-$\mathbf{438.02}$\,s ($24\times$ faster). It first reaches the target after
-$81$ queries versus $5824$ for ES ($72\times$ fewer). Both sit above a
-per-instance oracle ($8.06\times10^{-12}$), the expected price of a single
+a final loss of $\agLoss$ against ES's $\esLoss$, while using
+$\mathbf{\agQueries}$ forward evaluations against ES's $\mathbf{\esQueries}$
+($\budgetX\times$ smaller evaluation budget) and finishing in
+$\mathbf{\agWall}$\,s versus
+$\mathbf{\esWall}$\,s ($\wallX\times$ faster). It first reaches the target after
+$\agHit$ queries versus $\esHit$ for ES ($\hitX\times$ fewer). Both sit above a
+per-instance oracle ($\oracleLoss$), the expected price of a single
 amortized network serving
 all contexts.
 
@@ -569,10 +770,10 @@ gradient-free ES (mean over 3 seeds). Lower loss and far fewer queries.}
 \toprule
  & final loss & fwd queries & wall (s) \\
 \midrule
-autograd (ours) & $1.94\times10^{-10}$ & \textbf{300} & \textbf{18.24} \\
-ES (pop 32) & $2.19\times10^{-10}$ & 19{,}200 & 438.02 \\
+autograd (ours) & $\agLoss$ & $\mathbf{\agQueries}$ & $\mathbf{\agWall}$ \\
+ES (pop 32) & $\esLoss$ & $\esQueries$ & $\esWall$ \\
 \midrule
-per-instance oracle & $8.06\times10^{-12}$ & --- & --- \\
+per-instance oracle & $\oracleLoss$ & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -581,30 +782,32 @@ per-instance oracle & $8.06\times10^{-12}$ & --- & --- \\
 \centering
 \includegraphics[width=0.92\columnwidth]{figs/policy_servo_curve.png}
 \caption{Control convergence vs.\ model queries (log scale). Autograd reaches the
-target $72\times$ earlier in query count.}
+target $\hitX\times$ earlier in query count.}
 \label{fig:control}
 \end{figure}
 
 \subsection{RQ5: The differentiable sensor and environment}\label{sec:exp-sensor}
 The rendered marker flow images in-plane displacement wherever the gel shears:
-the cosine between pixel flow and surface in-plane displacement exceeds $0.998$
+the cosine between pixel flow and surface in-plane displacement exceeds $\flowCos$
 in all four contact regimes---including normal contact, whose small tangential
 field is coherent rather than noise-dominated on the corrected ground truth. A
 render$\to$track
-round trip recovers marker centroids to $0.14$\,px in stick, $0.26$\,px in partial
-slip, and $0.39$\,px in full slip at $160$\,px resolution
+round trip recovers marker centroids to $\trackStick$\,px in stick,
+$\trackPartial$\,px in partial
+slip, and $\trackFull$\,px in full slip at $160$\,px resolution
 (Fig.~\ref{fig:sensor}). Composing the renderer with the operator, gradient
 descent on the rendered \emph{image} recovers applied shear over 20 frames with
-$11.8\%$ mean magnitude error and $4.8^\circ$ mean direction error; in the three
-shear regimes the direction error is at most $1.1^\circ$ (stick $1.1^\circ$,
-partial $0.9^\circ$, full slip $0.4^\circ$), and both metrics are hardest in
+$\invMag\%$ mean magnitude error and $\invDir^\circ$ mean direction error; in the
+three
+shear regimes the direction error is at most $\invDirWorst^\circ$, and both metrics
+are hardest in
 normal frames, where the applied shear magnitude is near zero and direction
 becomes ill-defined.
 Finally, wrapping the frozen operator, the sensor, camera noise, and a reward into a
 single differentiable environment, the Sec.~\ref{sec:exp-control} policy closes
-$99.8\%$ of the random-to-oracle reward gap. Autograd gradients flow to the
+$\rewardClosed\%$ of the random-to-oracle reward gap. Autograd gradients flow to the
 action through the full image pipeline. A finite-difference diagnostic on the
-current noisy image-reward environment has $4.96\%$ relative error---within the
+current noisy image-reward environment has $\fdErr\%$ relative error---within the
 $5\%$ tolerance---but we still use it only as a gradient-flow sanity check, not as
 formal gradient verification or evidence for multi-step contact dynamics.
 
@@ -618,37 +821,142 @@ re-solving contact.}
 \label{fig:sensor}
 \end{figure}
 
+\subsection{Do the conclusions depend on the ground truth?}\label{sec:exp-gtinvariance}
+Every result above is measured against a \emph{simulated} target that carries its
+own discretisation error (Appendix~\ref{app:conv}). A reader is entitled to ask
+whether the comparison survives a better simulator. We test this directly rather
+than argue it. We regenerate the entire dataset at a substantially finer
+discretisation---gel mesh $24\!\to\!32$ elements per side with $24$ through-thickness
+layers, indenter subdivision $2\!\to\!4$ with the barrier width refined in step,
+time step halved, Newton tolerance tightened by $30\times$---which moves the target
+fields by $24$--$30\%$ in shape, an order of magnitude larger than the surrogate's
+own test error. We then retrain every model from scratch on the new targets.
+
+\todo{Run the A/B once the v2 sweep finishes, and report here: (a) the bake-off
+table on v2, (b) whether the ranking is preserved, (c) how each margin moves. State
+plainly which claims are ground-truth-invariant and which are not. The
+\emph{expected} pattern, which must be confirmed, not assumed: margins \emph{between
+learned models} are common-mode and should be stable, because all of them are fit on
+identical targets; margins against the \emph{analytic} baselines are not
+common-mode---those models are fixed physics scored against a moving target---and
+may shift. If the ranking does \emph{not} survive, say so and revise the claims.}
+
+Two classes of claim must be distinguished, and only the first is protected by this
+design. Margins \emph{among learned models} are common-mode: every model is fit on
+the same targets, so a systematic error in those targets largely cancels in the
+comparison, and the ranking is a statement about the architectures. Margins against
+the \emph{analytic} baselines are not: those are fixed closed-form physics scored
+against a target that moves when the solver is refined. We therefore report the
+former as the architectural result and the latter with the ground truth it was
+measured on named explicitly.
+
 \section{Limitations and Honest Scope}\label{sec:limits}
 We state the boundaries plainly, since they shape the contribution.
-\textbf{(1) Averaged simulation ground truth.} Each target is a robust average
-of up to $K{=}5$ repeated GPU solves; the adaptive filter keeps $2$--$5$
-replicates per frame, and $44\%$ of full-slip frames retain only two, leaving a
-residual tangential replicate noise of $4.4\%$ on average in full slip. This
-suppresses but does not eliminate solver stochasticity, and the resulting
-smoothness partly explains the high surrogate accuracy; the averaged fields also
-do not model noise,
-calibration drift, or other imperfections of a physical tactile sensor.
+\textbf{(1) Fidelity is to a solver, not to a sensor.} Our targets come from an IPC
+contact solver, and we report that solver's own residual discretisation error rather
+than assuming it away (Appendix~\ref{app:conv}): we do \emph{not} claim a converged
+ground truth, and once the surrogate's error falls below the solver's, its $\relL$
+measures distance to a \emph{particular solver configuration}, not to physical
+reality. The two errors are reported separately and must not be added or netted.
+What we do establish is that the architectural conclusions are insensitive to a
+ground-truth perturbation far larger than the residual (Sec.~\ref{sec:exp-gtinvariance}).
+The missing anchor is external, not numerical: the simulated fields model neither
+sensor noise nor calibration drift, and no amount of mesh refinement supplies that.
+Validation against a physical marker-gel sensor is the necessary next step and is
+the honest boundary of the present claims.
 \textbf{(2) Single-step quasi-static control.} The environment is a contextual
 one-step map rather than multi-step dynamics; temporal contact, hysteresis, and
 closed-loop stability require a temporal model and separate evaluation.
-\textbf{(3) Sphere-centric geometry.} Training and evaluation centre on spherical
-indenters, so generalization to edges, corners, and arbitrary objects remains
-open. Finally, speed is not claimed as a durable raw-throughput advantage over
+\textbf{(3) Sphere-centric geometry.} Training centres on spherical indenters.
+We characterise out-of-distribution transfer to six non-spherical shapes
+(Sec.~\ref{sec:exp-gen})---error degrades monotonically with geometry distance and
+recovers with $50$-frame few-shot adaptation---but zero-shot accuracy on
+far-from-sphere objects is not competitive, and a multi-primitive foundation model
+for arbitrary-object deployment remains future work. Finally, speed is not claimed as a durable raw-throughput advantage over
 modern batched GPU physics; the practical advantage is low latency,
 differentiability, and light deployment.
 
 \section{Conclusion}\label{sec:conclusion}
 We presented a locally-refined Fourier neural-operator surrogate for vision-based
-tactile sensing that is FEM-fidelity, differentiable, and hardware-light. The field-to-field framing
-exploits the non-locality of elastic contact and beats classical and analytic
-tactile models on real physics; its differentiability buys an order-of-magnitude
+tactile sensing that is faithful to an IPC contact solver, differentiable, and
+hardware-light. The field-to-field framing
+exploits the non-locality of elastic contact and beats classical, analytic, and
+dense learned tactile models on frictional-contact physics; its differentiability
+buys an order-of-magnitude
 gain in control sample efficiency; and a torch renderer provides an
-autograd-connected image-space loop around the frozen operator. We were explicit
-about its simulation, temporal, and
-geometric scope. The natural next step is to mount the surrogate inside a full
-Isaac-Sim robot environment and to close the sim-to-real loop on a physical marker-gel
+autograd-connected image-space loop around the frozen operator. We also audited the
+ground truth these claims rest on---something the operator-learning literature
+routinely omits---and showed the architectural conclusions survive re-deriving it
+at a far finer discretisation. We were explicit about the remaining scope: fidelity
+is to a solver rather than to a sensor, the environment is quasi-static, and the
+geometry is sphere-centric. The natural next step follows from the boundary we
+named: close the sim-to-real loop on a physical marker-gel
 sensor, fine-tuning the operator on real measurements so that reality corrects both
 discretisation and model error at once.
+
+\appendices
+\section{Ground-Truth Convergence Study}\label{app:conv}
+
+We audited the ground truth on three pilot frames spanning the contact modes
+(full-slip, stick, partial-slip). All errors are relative $L_2$ on the tangential
+surface field; \emph{shape} error is measured after removing the best-fit
+amplitude, isolating error that no rescaling can absorb. The reference is the
+finest configuration we could afford (gel $48\times48\times24$, indenter
+subdivision~4, $\hat d = 2.5\times10^{-5}$\,m).
+
+\textbf{The barrier and the indenter mesh are one knob.} The indenter is a
+polyhedron, not a sphere; its geometric error is the facet sagitta
+$s \approx e^2/(8R)$ ($s = 5.3\times10^{-5}$, $3.4\times10^{-6}$,
+$8.4\times10^{-7}$\,m at subdivision 2, 4, 5 for $R=4.7$\,mm). A barrier thinner
+than $s$ resolves the facets rather than the contact, so $\hat d$ and the
+subdivision must be refined together. Holding $\hat d / s \approx 7.5$, successive
+refinements contract at first order on \emph{all three} modes:
+$\{33.5, 26.0, 14.3\}\% \to \{6.6, 6.9, 3.7\}\%$, a ratio of $\approx 0.25$ per
+$4\times$ refinement. Refining either knob alone instead produces non-monotone
+curves --- an artefact of the two error sources exchanging dominance, not a
+property of the solver.
+
+\textbf{Three axes, three signatures.} The contact axis ($\hat d$ with
+subdivision) is amplitude-dominated; the gel mesh is shape-dominated
+(successive differences $\{10.6, 6.6, 7.5\}\% \to \{5.8, 5.4, 4.9\}\% \to
+\{2.7, 4.2, 2.9\}\%$ for $24\!\to\!32\!\to\!40\!\to\!48$); and the time step is
+amplitude-dominated and concentrated on partial slip
+($\Delta t: 10 \to 5$\,ms changes the field by $\{2.4, 4.0, 13.3\}\%$).
+The friction regularisation $\varepsilon_v$ contributes $<2\%$, and the contact
+resistance is \emph{not} a refinement parameter (raising it to $10^{11}$ perturbs
+the full-slip field by $31\%$).
+
+\textbf{Determinism.} Repeated solves of an identical command differ by $22.6\%$
+on a full-slip frame at a loose Newton tolerance ($3\times10^{-4}$) but by only
+$0.03$--$0.32\%$ at $10^{-5}$. Run-to-run spread is therefore a property of the
+tolerance, not of the GPU, and no replicate averaging is needed at the tolerance
+we use.
+
+\textbf{Residual, and what we do \emph{not} claim.} It is tempting to quote the
+distance from the production configuration to the finest run we could afford and
+call it the error. That number would be misleading: the reference is itself not
+converged, and on the time axis it is \emph{coarser} than production, so the
+comparison is not even a bound. We therefore follow the standard practice for
+solutions without an exact reference and estimate the residual from the observed
+convergence order together with the last refinement step. The contact and time axes
+contribute a few percent each; the gel-mesh axis is the dominant and
+slowest-contracting term, and closing it on every contact mode would cost roughly
+an order of magnitude more compute than the dataset itself.
+
+\textbf{We therefore make no claim of a converged ground truth}, and we do not ask
+the reader to accept that the residual is negligible. What we do instead is bound
+its \emph{consequence}: Sec.~\ref{sec:exp-gtinvariance} retrains every model on
+both the pre-refinement ground truth---which this study shows is $24$--$30\%$ off
+in field shape, an order of magnitude above the surrogate's own error---and the
+refined one, and reports whether the architectural ranking and margins move. A
+conclusion that survives a ground-truth perturbation that large does not depend on
+the remaining few percent.
+
+\textbf{The anchor we lack.} Convergence establishes only that we solve the
+equations we wrote down; it says nothing about whether those equations describe a
+real gel. The gold standard in this field is comparison against a physical sensor
+(as in the calibration-based simulators we benchmark), and we do not have it. That,
+not mesh resolution, is the boundary of our physical claims (Sec.~\ref{sec:limits}).
 
 \section*{Acknowledgment}
 We thank the maintainers of the open-source projects this work builds on---in

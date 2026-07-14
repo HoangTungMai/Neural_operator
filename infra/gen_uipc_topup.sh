@@ -18,7 +18,7 @@ KREPS="${1:-3}"
 START_COMBO="${2:-50}"
 END_COMBO="${3:-62}"
 IMG="${IMG:-isaac-lab-tacex:latest}"
-SCRIPT=/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py
+SCRIPT=/work/src/novbts/research/groundtruth/tacex_uipc_extract_shear.py
 NAME_PREFIX=uipctopup
 PY=.venv-gate2/bin/python
 SWEEP_DIR=data/uipc/sweep
@@ -109,7 +109,7 @@ while read -r CI R MU E SEED KIND; do
     avg="$fdir/uipc_gt_shear_avg.npz"
     nrep="$($PY -c "import glob;print(len(glob.glob('$fdir/rep_*/uipc_gt_shear.npz')))" 2>/dev/null)"
     if [ "$nrep" = "$KREPS" ]; then
-      [ -f "$avg" ] || $PY -m novbts.groundtruth.aggregate_uipc_replicates \
+      [ -f "$avg" ] || $PY -m novbts.research.groundtruth.aggregate_uipc_replicates \
         --glob "$fdir/rep_*/uipc_gt_shear.npz" --out "$avg" --mode-shear-scale 0.01 >/dev/null 2>&1
       [ -f "$avg" ] && fdone=$((fdone+1))
     fi

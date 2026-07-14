@@ -13,7 +13,7 @@ set -u
 cd "$(dirname "$0")/.."
 NCOMBOS="${1:-10}"                         # 10 combos * 40 = 400 normal frames
 IMG=isaac-lab-fem:latest
-SCRIPT=/work/src/novbts/groundtruth/isaac_extract_shear.py
+SCRIPT=/work/src/novbts/research/groundtruth/isaac_extract_shear.py
 NAME=femnormsweep
 PY=.venv-gate2/bin/python
 COMMON="--frames 40 --hex-res 24 --gel-xy 0.05 --gel-z 0.02 --marker-side 32 \

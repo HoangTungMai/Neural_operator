@@ -215,12 +215,12 @@ Muc do: **Medium**
 
 Nhieu entrypoint live default sang legacy PhysX/FEM data:
 
-- `src/novbts/operator/fem_benchmark.py`
-- `src/novbts/operator/vbts_baselines.py`
-- `src/novbts/operator/diff_policy.py`
-- `src/novbts/sensor/build_sensor_dataset.py`
-- `src/novbts/sensor/sensor_inverse_demo.py`
-- `src/novbts/sensor/tactile_env.py`
+- `src/novbts/research/fno/fem_benchmark.py`
+- `src/novbts/research/fno/vbts_baselines.py`
+- `src/novbts/research/fno/diff_policy.py`
+- `src/novbts/simulation/sensor/build_sensor_dataset.py`
+- `src/novbts/simulation/sensor/sensor_inverse_demo.py`
+- `src/novbts/simulation/sensor/tactile_env.py`
 
 Pipeline dung final thi co truyen `--data data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz` trong `infra/run_bc_downstream.sh`, nhung nguoi doc chay module khong tham so se sinh ket qua khac.
 

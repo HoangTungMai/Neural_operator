@@ -9,7 +9,7 @@
 set -u
 cd "$(dirname "$0")/.."           # repo root
 IMG=isaac-lab-fem:latest
-SCRIPT=/work/src/novbts/groundtruth/isaac_extract_shear.py
+SCRIPT=/work/src/novbts/research/groundtruth/isaac_extract_shear.py
 NAME=fempilot
 COMMON="--frames 40 --hex-res 24 --gel-xy 0.05 --gel-z 0.02 --marker-side 32"
 

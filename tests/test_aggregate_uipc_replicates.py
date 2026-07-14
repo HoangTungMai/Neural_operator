@@ -16,7 +16,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from novbts.groundtruth.aggregate_uipc_replicates import (  # noqa: E402
+from novbts.research.groundtruth.aggregate_uipc_replicates import (  # noqa: E402
     aggregate_sweep,
     average_files,
     stratified_train_test_order,
@@ -33,6 +33,7 @@ def write_rep(path: Path, disp: np.ndarray, solve_s: float = 1.0) -> None:
         disp=disp[None].astype(np.float32),
         mode=np.array([3], dtype=np.int32),
         solve_time_s=np.array([solve_s], dtype=np.float32),
+        run_time_s=np.array([solve_s + 0.5], dtype=np.float32),
         gel_bottom_bc=np.array(["fixed"]),
         indentor_constraint_strength=np.array([30000.0], dtype=np.float32),
     )
@@ -76,6 +77,8 @@ def test_adaptive_drop_outlier_and_contracts(tmp: Path) -> None:
         assert key in avg
 
     assert avg["solve_time_s"].tolist() == [15.0]
+    assert avg["run_time_s"].tolist() == [17.5]
+    assert avg["rep_run_time_mean_s"].tolist() == [3.5]
     assert avg["n_replicates"].tolist() == [4]
     assert avg["raw_n_replicates"].tolist() == [5]
 
@@ -100,6 +103,30 @@ def test_adaptive_floor_fallback_and_mixed_raw_k(tmp: Path) -> None:
     assert z["robust_pairwise_rel_l2"].shape == (2, 5, 5)
 
 
+def test_single_replicate_bypasses_adaptive_selection(tmp: Path) -> None:
+    paths = make_reps(tmp / "frame", 1, outlier=False)
+    avg = average_files(paths, adaptive_tol=0.01, adaptive_floor=3)
+
+    assert avg["n_replicates"].tolist() == [1]
+    assert avg["raw_n_replicates"].tolist() == [1]
+    assert avg["kept_replicate_indices"].tolist() == [1]
+    assert avg["rejected_replicate_indices"].size == 0
+    for key in (
+        "rep_noise_overall", "rep_noise_normal", "rep_noise_tangential",
+        "rep_noise_overall_raw", "rep_noise_normal_raw", "rep_noise_tangential_raw",
+    ):
+        assert avg[key].tolist() == [0.0]
+    assert "adaptive_kept_count" not in avg
+
+    sweep = tmp / "sweep"
+    make_reps(sweep / "combo_000" / "frame_000", 1, outlier=False)
+    out = tmp / "merged.npz"
+    aggregate_sweep(str(sweep), str(out), mode_shear_scale=0.001, adaptive_tol=0.01)
+    z = np.load(out, allow_pickle=True)
+    assert z["n_replicates"].tolist() == [1]
+    assert "adaptive_kept_count" not in z.files
+
+
 def test_stratified_order_is_deterministic() -> None:
     modes = np.array([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], dtype=np.int32)
     a = stratified_train_test_order(modes, test_size=4, seed=2026)
@@ -115,6 +142,7 @@ def main() -> None:
     try:
         test_adaptive_drop_outlier_and_contracts(tmp / "case1")
         test_adaptive_floor_fallback_and_mixed_raw_k(tmp / "case2")
+        test_single_replicate_bypasses_adaptive_selection(tmp / "case3")
         test_stratified_order_is_deterministic()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

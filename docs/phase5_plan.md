@@ -28,9 +28,9 @@ not built in this phase.
 
 ## Milestone 5a — Differentiable marker-dot sensor model (PRIMARY)
 
-New subpackage `src/novbts/sensor/` (with `__init__.py`):
+New subpackage `src/novbts/simulation/sensor/` (with `__init__.py`):
 
-### `src/novbts/sensor/markercam.py` (torch, differentiable)
+### `src/novbts/simulation/sensor/markercam.py` (torch, differentiable)
 ```python
 class PinholeCamera:                 # K from (fov_deg, px_w, px_h, working_dist); pose looks at gel membrane
     def project(self, pts_xyz):      # [N,M,3] gel-frame -> [N,M,2] pixel coords (perspective divide)
@@ -47,7 +47,7 @@ def track_flow_image(img_rest, img_def):         # optional: blob-centroid re-de
   the sensor is a deterministic differentiable map `disp -> image`. Gaussian-splat render keeps it
   smooth/differentiable (no hard rasterization).
 
-### `src/novbts/sensor/build_sensor_dataset.py` (CLI)
+### `src/novbts/simulation/sensor/build_sensor_dataset.py` (CLI)
 - Loads an aggregated FEM npz (default `data/fem/shear_fine_swept_normaug.npz`), reads
   `coords[M,2]`, `disp[N,M,3]`, `mode[N]` (reuse loader pattern from `fem_benchmark.load`).
 - Produces the **sensor dataset**: `rest_img[1,1,H,W]`, `def_img[N,1,H,W]` (or store pixel
@@ -66,7 +66,7 @@ Demonstrate the sensor composes with the existing surrogate and Phase 4 machiner
 - **Compatibility check:** `FEM disp -> render` vs `FNO(contact) -> disp -> render` produce
   consistent marker images (rel-L2 in pixel-flow space), confirming the FNO + renderer reproduces
   the sensor observation. FNO input format `params_to_fieldinput` (`field2field.py`) is untouched.
-- **Differentiable round-trip demo** (`src/novbts/sensor/sensor_inverse_demo.py`, mirrors
+- **Differentiable round-trip demo** (`src/novbts/simulation/sensor/sensor_inverse_demo.py`, mirrors
   `inverse_demo.py`): recover applied shear `(sx,sy)` from the **rendered marker image** by
   autograd through `render ∘ FNO` — i.e. inverse problem from the *actual sensor output*, not the
   raw field. Report recovery error + that gradients flow through the renderer (the integrated
@@ -83,22 +83,22 @@ Demonstrate the sensor composes with the existing surrogate and Phase 4 machiner
   action, fast transition via FNO surrogate, reward for a tactile task; plug in the Phase-4 policy.
 
 ## Critical files
-- NEW `src/novbts/sensor/__init__.py`, `markercam.py`, `build_sensor_dataset.py`,
+- NEW `src/novbts/simulation/sensor/__init__.py`, `markercam.py`, `build_sensor_dataset.py`,
   `sensor_inverse_demo.py`
-- REUSE (read-only): `src/novbts/operator/field2field.py` (FNOField, params_to_fieldinput,
-  train_operator, DEV), `src/novbts/operator/fem_benchmark.py` (load, norm_from),
-  `src/novbts/operator/inverse_demo.py` (autograd-recovery pattern to mirror),
+- REUSE (read-only): `src/novbts/research/fno/field2field.py` (FNOField, params_to_fieldinput,
+  train_operator, DEV), `src/novbts/research/fno/fem_benchmark.py` (load, norm_from),
+  `src/novbts/research/fno/inverse_demo.py` (autograd-recovery pattern to mirror),
   `src/novbts/paths.py` (FEM, RUNS, ensure)
 - Data in: `data/fem/shear_fine_swept_normaug.npz`; data out: `data/fem/*_sensor.npz`;
   diagnostics: `runs/phase5/`
 
 ## Verification
-1. `python -m novbts.sensor.build_sensor_dataset --data data/fem/shear_fine_swept_normaug.npz`
+1. `python -m novbts.simulation.sensor.build_sensor_dataset --data data/fem/shear_fine_swept_normaug.npz`
    → writes `*_sensor.npz` + `runs/phase5/preview.png`; round-trip error (image-tracked flow vs
    projected `disp[:, :2]`) below tolerance for stick and slip frames.
 2. Differentiability sanity: finite-difference vs autograd of `render` w.r.t. a marker position
    agree (the renderer is smooth/differentiable).
-3. `python -m novbts.sensor.sensor_inverse_demo` → recovers `(sx,sy)` from the rendered marker
+3. `python -m novbts.simulation.sensor.sensor_inverse_demo` → recovers `(sx,sy)` from the rendered marker
    image through `render ∘ FNO` to low error (compare to `inverse_demo.py`'s 2.3% from raw field),
    proving the end-to-end differentiable sensor pipeline.
 4. Visual check: `runs/phase5/preview.png` shows rest vs deformed dot pattern with sensible

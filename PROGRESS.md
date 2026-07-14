@@ -167,7 +167,7 @@ GEL_BOTTOM_BC=fixed INDENTOR_CONSTRAINT_STRENGTH=3e4 VELOCITY_TOL=0.0003
 
 Code updates:
 
-- `src/novbts/groundtruth/uniform_shift_diagnostic.py`
+- `src/novbts/research/groundtruth/uniform_shift_diagnostic.py`
   now reports gel BC, gel strength, indentor strength, depth max, and depth p95.
 - `infra/run_phase7_bc_sweep.sh` exposes indentor drive strength.
 - `infra/gen_uipc_trajectory_phase7.sh` exposes BC env knobs.
@@ -229,7 +229,7 @@ Continued from BC sweep by checking whether UIPC has a true fixed-vertex route.
 Findings:
 
 - UIPC/TacEx does expose hard fixed FEM vertices through `builtin.is_fixed`.
-- `src/novbts/groundtruth/tacex_uipc_extract_shear.py` now has:
+- `src/novbts/research/groundtruth/tacex_uipc_extract_shear.py` now has:
   - `--gel-bottom-bc soft` (default, historical behavior)
   - `--gel-bottom-bc fixed` (sets `builtin.is_fixed=1` on bottom vertices)
 - `gel_bottom_bc` is saved into NPZ provenance and propagated by
@@ -274,7 +274,7 @@ BC confirmation sweep completed after the single-frame probe.
 
 New reusable tools:
 
-- `src/novbts/groundtruth/uniform_shift_diagnostic.py`
+- `src/novbts/research/groundtruth/uniform_shift_diagnostic.py`
   - computes tangential uniform/rigid fraction, residual tangential metrics,
     depth p95/max, and local center-edge `uz`
 - `infra/run_phase7_bc_sweep.sh`
@@ -344,11 +344,11 @@ Problem tested:
 
 Implementation changes:
 
-- `src/novbts/groundtruth/tacex_uipc_extract_shear.py`
+- `src/novbts/research/groundtruth/tacex_uipc_extract_shear.py`
   - added `--gel-constraint-strength`, default `100`
   - added `--indentor-constraint-strength`, default `100`
   - saved both values into NPZ provenance
-- `src/novbts/groundtruth/aggregate_uipc_replicates.py`
+- `src/novbts/research/groundtruth/aggregate_uipc_replicates.py`
   - preserves those provenance keys through replicate/frame aggregation
 - Python compile passed for both files.
 
@@ -431,8 +431,8 @@ Working tree (branch `phase4-diff-policy`), uncommitted:
 
 - `PROGRESS.md`
 - `infra/gen_uipc_trajectory_phase7.sh`
-- `src/novbts/sensor/temporal.py`
-- `src/novbts/sensor/temporal_compare.py`
+- `src/novbts/simulation/sensor/temporal.py`
+- `src/novbts/simulation/sensor/temporal_compare.py`
 
 Remaining items (USER-owned, not delegated):
 
@@ -469,7 +469,7 @@ What is true:
 
 Implementation update:
 
-- `src/novbts/sensor/temporal.py` now records:
+- `src/novbts/simulation/sensor/temporal.py` now records:
   - `trajectory_semantics`
   - per-load-mode `field_stats.by_frac`
   - final z-only and xy-only marker-flow decomposition
@@ -497,14 +497,14 @@ motion. Normal-depth sensitivity scales roughly with `|uz| / working_dist`.
 
 Fix applied:
 
-- `src/novbts/sensor/temporal.py`
+- `src/novbts/simulation/sensor/temporal.py`
   - `--working-dist` now defaults to auto rather than fixed `0.05`.
   - auto distance is `working_dist_ratio * marker_half_extent`, default ratio
     `1.1`.
   - This preserves the old large-gel view (`45 mm * 1.1 ~= 50 mm`) while giving
     the realistic Phase7 gel `9 mm * 1.1 ~= 9.9 mm`.
   - `runs/phase7/temporal.json` now records the camera block.
-- `src/novbts/sensor/temporal_compare.py` uses the same auto-scaled camera so
+- `src/novbts/simulation/sensor/temporal_compare.py` uses the same auto-scaled camera so
   GT-vs-FNO temporal comparison matches the GIF view.
 - Re-rendered `runs/phase7/temporal.*` from
   `data/uipc/trajectory_phase7_fullslip/shear_res24_traj_REALISTIC.npz`.
@@ -557,7 +557,7 @@ Comparison points:
 
 Implementation update:
 
-- `src/novbts/sensor/temporal.py` now writes quantitative `field_stats` into
+- `src/novbts/simulation/sensor/temporal.py` now writes quantitative `field_stats` into
   `runs/phase7/temporal.json` alongside the GIF/figures.
 - Re-rendered Phase7 full-slip temporal artifacts in `runs/phase7/`.
 
@@ -602,7 +602,7 @@ Pipeline update:
   - default depths `0.35/0.55/0.75 mm`
   - default drive ratios `0.30/0.80/1.30`
   - env overrides `DEPTH_LEVELS`, `DRIVE_LEVELS`
-- `src/novbts/sensor/temporal.py` now writes extra visual diagnostics:
+- `src/novbts/simulation/sensor/temporal.py` now writes extra visual diagnostics:
   - `runs/phase7/temporal_depth_residual.png`
   - `runs/phase7/phase7_field_diagnostic.png`
 - Re-rendered Phase7 temporal outputs from
@@ -665,14 +665,14 @@ Figures regenerated from the GPU-current runs:
 Phase 7 trajectory/loading-history design started:
 
 - Added UIPC trajectory support to
-  `src/novbts/groundtruth/tacex_uipc_extract_shear.py`
+  `src/novbts/research/groundtruth/tacex_uipc_extract_shear.py`
   - `--save-trajectory`, `--traj-steps`, `--load-mode`
   - batch rows may include sixth column `linear|ortho|reverse`
   - output keeps legacy keys `disp_traj`, `traj_fracs`, `load_mode`,
     `load_mode_names`
-- Updated `src/novbts/groundtruth/aggregate_uipc_replicates.py` to average
+- Updated `src/novbts/research/groundtruth/aggregate_uipc_replicates.py` to average
   `disp_traj` across K UIPC reps and preserve load-mode metadata.
-- Moved `novbts.operator.loading_history` default output to `runs/phase7`.
+- Moved `novbts.research.fno.loading_history` default output to `runs/phase7`.
 - Added `infra/gen_uipc_trajectory_phase7.sh`:
   - endpoint-controlled UIPC trajectory GT
   - same endpoint repeated under `linear/ortho/reverse`
@@ -818,7 +818,7 @@ Pre-Phase-2 preparation da lam trong luc cho GT:
 
 - `py_compile` pass:
   - `infra/verify_realistic_reground.py`
-  - `src/novbts/groundtruth/aggregate_uipc_replicates.py`
+  - `src/novbts/research/groundtruth/aggregate_uipc_replicates.py`
 - `bash -n` pass:
   - `infra/run_realistic_downstream.sh`
   - `infra/gen_uipc_sweep.sh`
@@ -1117,7 +1117,7 @@ Do main service da launch truoc edit nay, running bash co the van giu old script
 inode. Sau Phase 1 phai gate split metadata; neu thieu, rerun host aggregator:
 
 ```bash
-rtk proxy .venv-gate2/bin/python -m novbts.groundtruth.aggregate_uipc_replicates \
+rtk proxy .venv-gate2/bin/python -m novbts.research.groundtruth.aggregate_uipc_replicates \
   --sweep-dir data/uipc/sweep_realistic \
   --out data/uipc/shear_res24_avg_swept_REALISTIC.npz \
   --mode-shear-scale 0.001 --expect-reps 3 \
@@ -1175,7 +1175,7 @@ Static traceability fix da ap dung trong `docs/kse2026/README.md`:
 - env source giu `runs/phase6/env_demo.json` nhung bo stale hard-coded 87%
 
 Physical BC da duoc audit truc tiep trong
-`src/novbts/groundtruth/tacex_uipc_extract_shear.py`:
+`src/novbts/research/groundtruth/tacex_uipc_extract_shear.py`:
 
 - structured gel z spans `0..gel_z`
 - chi bottom mask (`z=min`) duoc set `is_constrained=1` va aim ve rest position
@@ -1298,16 +1298,16 @@ Working tree hien tai co cac file modified:
   - Them final aggregate ra `data/uipc/shear_res24_avg_swept_REALISTIC.npz`.
   - Them env overrides: `GEL_RES`, `EPS_VELOCITY`, `D_HAT`, `CONTACT_RESISTANCE`, `VELOCITY_TOL`, `GEL_XY`, `GEL_Z`, `SWEEP_DIR`.
 
-- `src/novbts/groundtruth/tacex_uipc_extract_shear.py`
+- `src/novbts/research/groundtruth/tacex_uipc_extract_shear.py`
   - Doi marker sampling tren top face tu nearest-neighbor KDTree sang bilinear interpolation tren structured top grid.
   - Neu top grid khong rectangular thi fallback ve nearest.
   - Luu provenance `marker_sampling` vao npz.
 
-- `src/novbts/groundtruth/aggregate_uipc_replicates.py`
+- `src/novbts/research/groundtruth/aggregate_uipc_replicates.py`
   - So sanh string-safe trong `_same`.
   - Check/copy `marker_sampling` qua averaged frames va final sweep aggregate.
 
-- `src/novbts/groundtruth/aggregate_uipc_convergence.py`
+- `src/novbts/research/groundtruth/aggregate_uipc_convergence.py`
   - Assert cac convergence fields paired dung:
     - `coords`
     - `params`
@@ -1317,13 +1317,13 @@ Working tree hien tai co cac file modified:
     - `marker_sampling`
   - Luu `marker_sampling` vao convergence report.
 
-- `src/novbts/operator/fem_benchmark.py`
+- `src/novbts/research/fno/fem_benchmark.py`
   - Load GT provenance tu selected `--data` npz.
   - Solver FPS lay tu `solve_time_s` trong input npz, khong scan stale FEM/PhysX files nua.
   - Them `gt_path`, `gt_provenance`, data-derived `param_box`.
   - Them generic `gt_solver`, giu alias `physx_fem_shear_solver` de compat.
 
-- `src/novbts/report/make_kse_figs.py`
+- `src/novbts/research/report/make_kse_figs.py`
   - Figure generation prefer `throughput_fps["gt_solver"]`, fallback alias cu.
 
 ## Phase 0 artifacts va ket qua hien tai
@@ -1433,7 +1433,7 @@ rtk proxy env CONV_DIR=data/uipc/conv_realistic_eps_axis_vtol001 \
   RES_LEVELS_STR="24" EPS_LEVELS_STR="0.001 0.0005 0.00025 0.0001" \
   bash infra/gen_uipc_convergence.sh
 
-rtk proxy .venv-gate2/bin/python -m novbts.groundtruth.aggregate_uipc_convergence \
+rtk proxy .venv-gate2/bin/python -m novbts.research.groundtruth.aggregate_uipc_convergence \
   --conv-dir data/uipc/conv_realistic_eps_axis_vtol001
 ```
 
@@ -1592,7 +1592,7 @@ rtk grep "0.975|0.341|50\\\\times50|490/430|flat-punch" docs/kse2026 src runs
   - commit `1d0d856 Add tier1 geometry OOD pipeline`
   - driver supports `--indentor-geom` plus deterministic cylinder/cuboid/ellipsoid fan tets
   - `infra/gen_uipc_geom_ood.sh`
-  - `src/novbts/operator/geometry_ood.py`
+  - `src/novbts/research/fno/geometry_ood.py`
 - Generated Tier 1 production-resolution datasets:
   - `data/uipc/geom_ood/cylinder/cylinder_avg.npz`: 150 frames, K=3, geom code 2
   - `data/uipc/geom_ood/sphere_oodR/sphere_oodR_avg.npz`: 150 frames, K=3, R=8-10 mm

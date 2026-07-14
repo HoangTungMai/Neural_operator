@@ -37,15 +37,16 @@ fi
 START_COMBO="${4:-0}"
 END_COMBO="${5:-$((NCOMBOS - 1))}"
 IMG="${IMG:-isaac-lab-tacex:latest}"
-SCRIPT=/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py
+SCRIPT=/work/src/novbts/research/groundtruth/tacex_uipc_extract_shear.py
 NAME_PREFIX=uipcsweep
 PY=.venv-gate2/bin/python
-SWEEP_DIR="${SWEEP_DIR:-data/uipc/sweep_realistic}"
-OUT_DATA="${OUT_DATA:-data/uipc/shear_res24_avg_swept_REALISTIC.npz}"
+SWEEP_DIR="${SWEEP_DIR:-data/uipc/sweep_nz24}"
+OUT_DATA="${OUT_DATA:-data/uipc/shear_res24_nz24_K1_swept.npz}"
 ROWS_DIR="$SWEEP_DIR/_rows"
 SHARD="${START_COMBO}_${END_COMBO}"
 PROG="/work/fem_progress_uipc_${SHARD}.txt"   # per-shard log so parallel shards don't clobber
 GEL_RES="${GEL_RES:-24}"
+GEL_NZ="${GEL_NZ:-}"
 EPS_VELOCITY="${EPS_VELOCITY:-0.000025}"
 D_HAT="${D_HAT:-0.0001}"
 CONTACT_RESISTANCE="${CONTACT_RESISTANCE:-1.0e9}"
@@ -56,14 +57,26 @@ GEL_BOTTOM_BC="${GEL_BOTTOM_BC:-soft}"
 GEL_CONSTRAINT_STRENGTH="${GEL_CONSTRAINT_STRENGTH:-100}"
 INDENTOR_CONSTRAINT_STRENGTH="${INDENTOR_CONSTRAINT_STRENGTH:-100}"
 TEST_SIZE="${TEST_SIZE:-400}"
+# d_hat and indentor_subdiv are NOT independent: the barrier must be able to resolve the
+# faceted sphere (d_hat / sagitta >~ 5, sagitta ~= edge^2/(8R)). Refine them together.
+INDENTOR_SUBDIV="${INDENTOR_SUBDIV:-2}"
+DT="${DT:-0.01}"
+PRESS_STEPS="${PRESS_STEPS:-40}"
+SETTLE_STEPS="${SETTLE_STEPS:-10}"
+SHEAR_STEPS="${SHEAR_STEPS:-80}"
+SHEAR_SETTLE="${SHEAR_SETTLE:-10}"
 
 COMMON="--batch --gel-res $GEL_RES --eps-velocity $EPS_VELOCITY --d-hat $D_HAT \
         --contact-resistance $CONTACT_RESISTANCE --gel-xy $GEL_XY --gel-z $GEL_Z \
-        --velocity-tol $VELOCITY_TOL \
+        --velocity-tol $VELOCITY_TOL --indentor-subdiv $INDENTOR_SUBDIV --dt $DT \
         --gel-bottom-bc $GEL_BOTTOM_BC --gel-constraint-strength $GEL_CONSTRAINT_STRENGTH \
         --indentor-constraint-strength $INDENTOR_CONSTRAINT_STRENGTH \
-        --marker-side 32 --press-steps 40 --settle-steps 10 --shear-steps 80 \
-        --shear-settle 10 --batch-reps $KREPS --progress-file $PROG"
+        --marker-side 32 --press-steps $PRESS_STEPS --settle-steps $SETTLE_STEPS \
+        --shear-steps $SHEAR_STEPS --shear-settle $SHEAR_SETTLE \
+        --batch-reps $KREPS --progress-file $PROG"
+if [ -n "$GEL_NZ" ]; then
+  COMMON="$COMMON --gel-nz $GEL_NZ"
+fi
 
 mkdir -p "$SWEEP_DIR" "$ROWS_DIR"
 
@@ -121,7 +134,16 @@ elif [ -n "$ROBUST_KEEP" ]; then
 fi
 AGG_EXTRA+=(--robust-channel "$ROBUST_CHANNEL")
 
-echo "UIPC BATCH SWEEP: combos ${START_COMBO}..${END_COMBO} | frames=$FRAMES K=$KREPS | gel_bc=$GEL_BOTTOM_BC gel_strength=$GEL_CONSTRAINT_STRENGTH indentor_strength=$INDENTOR_CONSTRAINT_STRENGTH | adaptive_tol=${ADAPTIVE_TOL:-none} adaptive_floor=$ADAPTIVE_FLOOR robust_keep=${ROBUST_KEEP:-none} | log $PROG"
+echo "UIPC BATCH SWEEP CONFIG"
+echo "  combos=${START_COMBO}..${END_COMBO} ncombos=$NCOMBOS frames=$FRAMES batch_reps=$KREPS"
+echo "  sweep_dir=$SWEEP_DIR out_data=$OUT_DATA image=$IMG script=$SCRIPT"
+echo "  gel_res=$GEL_RES gel_nz=${GEL_NZ:-default} gel_xy=$GEL_XY gel_z=$GEL_Z marker_side=32"
+echo "  velocity_tol=$VELOCITY_TOL eps_velocity=$EPS_VELOCITY d_hat=$D_HAT contact_resistance=$CONTACT_RESISTANCE"
+echo "  gel_bottom_bc=$GEL_BOTTOM_BC gel_constraint_strength=$GEL_CONSTRAINT_STRENGTH indentor_constraint_strength=$INDENTOR_CONSTRAINT_STRENGTH"
+echo "  indentor_subdiv=$INDENTOR_SUBDIV dt=$DT"
+echo "  press_steps=$PRESS_STEPS settle_steps=$SETTLE_STEPS shear_steps=$SHEAR_STEPS shear_settle=$SHEAR_SETTLE"
+echo "  adaptive_tol=${ADAPTIVE_TOL:-none} adaptive_floor=$ADAPTIVE_FLOOR robust_keep=${ROBUST_KEEP:-none} robust_channel=$ROBUST_CHANNEL"
+echo "  progress_file=$PROG"
 ok=0; failc=0
 
 while read -r CI R MU E SEED; do
@@ -130,6 +152,37 @@ while read -r CI R MU E SEED; do
   rows="$ROWS_DIR/$combo.rows"
   mkdir -p "$cdir"
   echo "=== $combo: R=$R mu=$MU E=$E (batch ${FRAMES}x${KREPS} in ONE boot) ==="
+
+  # A completed combo needs one loadable per-frame average for every requested
+  # frame.  Skip it entirely on relaunch; partial combos still resume through
+  # the driver's --batch per-replicate skip logic below.
+  combo_complete="$($PY - "$cdir" "$FRAMES" <<'PYEOF'
+import sys
+from pathlib import Path
+import numpy as np
+
+cdir, frames = Path(sys.argv[1]), int(sys.argv[2])
+for fi in range(frames):
+    path = cdir / f"frame_{fi:03d}" / "uipc_gt_shear_avg.npz"
+    if not path.is_file():
+        print(0)
+        break
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            if not z.files:
+                raise ValueError("empty NPZ")
+    except (OSError, ValueError, EOFError):
+        print(0)
+        break
+else:
+    print(1)
+PYEOF
+)"
+  if [ "$combo_complete" = "1" ]; then
+    echo "  $combo SKIP (all $FRAMES averaged NPZ files are loadable)"
+    ok=$((ok+1))
+    continue
+  fi
 
   # one Isaac boot for the whole combo (resumable: --batch skips existing rep npz)
   cname="${NAME_PREFIX}_${CI}"
@@ -153,7 +206,7 @@ while read -r CI R MU E SEED; do
     avg="$fdir/uipc_gt_shear_avg.npz"
     nrep="$($PY -c "import glob;print(len(glob.glob('$fdir/rep_*/uipc_gt_shear.npz')))" 2>/dev/null)"
     if [ "$nrep" = "$KREPS" ]; then
-      [ -f "$avg" ] || $PY -m novbts.groundtruth.aggregate_uipc_replicates \
+      [ -f "$avg" ] || $PY -m novbts.research.groundtruth.aggregate_uipc_replicates \
         --glob "$fdir/rep_*/uipc_gt_shear.npz" --out "$avg" --mode-shear-scale 0.001 \
         "${AGG_EXTRA[@]}" >/dev/null 2>&1
       [ -f "$avg" ] && fdone=$((fdone+1))
@@ -165,7 +218,7 @@ done < "$COMBO_META"
 
 echo "BATCH SWEEP SHARD ${SHARD} DONE: combos_ok=$ok incomplete=$failc"
 
-$PY -m novbts.groundtruth.aggregate_uipc_replicates \
+$PY -m novbts.research.groundtruth.aggregate_uipc_replicates \
   --sweep-dir "$SWEEP_DIR" \
   --out "$OUT_DATA" \
   --mode-shear-scale 0.001 \

@@ -36,6 +36,7 @@ __pycache__/
 # transient Isaac progress files (container-written, all variants)
 fem_progress*.txt
 sim_grasp_*progress.txt
+sim_sensor_progress.txt
 convergence.txt
 
 # local LLM proxy config (machine-specific, not project code)
@@ -49,3 +50,7 @@ codex/
 
 # one-time pre-corrected-BC backups (originals already in git history / runs backups)
 *.PRE_BC.*
+
+# Editor + Isaac/CEF client scratch
+.vscode/
+GPUCache/

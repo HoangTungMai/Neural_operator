@@ -36,7 +36,7 @@ END_COMBO="${6:-$((NCOMBOS - 1))}"
 
 IMG="${IMG:-isaac-lab-tacex:latest}"
 PY="${PY:-.venv-gate2/bin/python}"
-SCRIPT=/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py
+SCRIPT=/work/src/novbts/research/groundtruth/tacex_uipc_extract_shear.py
 PROD_NPZ="${PROD_NPZ:-data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz}"
 OOD_ROOT="${OOD_ROOT:-data/uipc/geom_ood}"
 if [ "$GEOM_REQ" = "bolt_hex" ] || [ "$GEOM_REQ" = "rounded_tip" ] || \
@@ -178,7 +178,7 @@ while read -r CI R R2 MU E SEED; do
     avg="$fdir/uipc_gt_shear_avg.npz"
     nrep="$($PY -c "import glob;print(len(glob.glob('$fdir/rep_*/uipc_gt_shear.npz')))" 2>/dev/null)"
     if [ "$nrep" = "$KREPS" ]; then
-      [ -f "$avg" ] || $PY -m novbts.groundtruth.aggregate_uipc_replicates \
+      [ -f "$avg" ] || $PY -m novbts.research.groundtruth.aggregate_uipc_replicates \
         --glob "$fdir/rep_*/uipc_gt_shear.npz" --out "$avg" --mode-shear-scale 0.001 >/dev/null 2>&1
       [ -f "$avg" ] && fdone=$((fdone+1))
     fi
@@ -193,6 +193,6 @@ if [ "$TEST_SIZE" = "0" ]; then
   [ "$failc" = "0" ]
   exit $?
 fi
-$PY -m novbts.groundtruth.aggregate_uipc_replicates \
+$PY -m novbts.research.groundtruth.aggregate_uipc_replicates \
   --sweep-dir "$SWEEP_DIR" --out "$OUT_DATA" --mode-shear-scale 0.001 \
   --expect-reps "$KREPS" --test-size "$TEST_SIZE" --shuffle-seed 3026

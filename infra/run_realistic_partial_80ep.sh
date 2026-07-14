@@ -25,20 +25,20 @@ if not np.all(np.asarray(d["n_replicates"]) == 3):
 print("PARTIAL_80EP_GATE_OK", {"N": n, "train": n - n_test, "test": n_test})
 PY
 
-"$PY" -m novbts.operator.fem_benchmark \
+"$PY" -m novbts.research.fno.fem_benchmark \
   --data "$DATA" --n-test "$N_TEST" --epochs 80 --clf-epochs 40 \
   --modes 12 --lr 0.001 --lambda-cls 0.1
 
-"$PY" -m novbts.operator.vbts_baselines \
+"$PY" -m novbts.research.fno.vbts_baselines \
   --data "$DATA" --n-test "$N_TEST" --epochs 80 --modes 12 --lr 0.001 --ksize 31
 
-"$PY" -m novbts.operator.diff_policy \
+"$PY" -m novbts.research.fno.diff_policy \
   --data "$DATA" --train-policy --task servo \
   --n-test "$N_TEST" --epochs 80 --modes 12 --lr 0.001 \
   --steps 300 --bs 128 --policy-lr 0.01 --lambda-reg 0 \
   --es-pop 32 --es-sigma 0.02 --log-every 10 --n-seeds 3
 
-"$PY" -m novbts.sensor.build_sensor_dataset \
+"$PY" -m novbts.simulation.sensor.build_sensor_dataset \
   --data "$DATA" \
   --px 160 --sensor-marker-side 11 --marker-placement pixel_even \
   --marker-pixel-fill 0.75 --marker-inset 0.06 \
@@ -46,7 +46,7 @@ PY
   --dot-polarity dark --background 0.72 --contrast 0.58 \
   --saturate-dots --rt-n 120 --track-win 5 --sample-n-per-mode 3
 
-"$PY" -m novbts.sensor.sensor_inverse_demo \
+"$PY" -m novbts.simulation.sensor.sensor_inverse_demo \
   --data "$DATA" \
   --n-test "$N_TEST" --epochs 80 --modes 12 --lr 0.001 \
   --px 160 --sensor-marker-side 11 --marker-placement pixel_even \
@@ -57,14 +57,14 @@ PY
   --inverse-n-per-mode 5 --inverse-restarts 8 \
   --inverse-min-shear-frac 0.01
 
-"$PY" -m novbts.sensor.tactile_env \
+"$PY" -m novbts.simulation.sensor.tactile_env \
   --demo --data "$DATA" \
   --n-test "$N_TEST" --epochs 80 --modes 12 --lr 0.001 \
   --sensor-side 11 --px 64 --reward-mode image --noise-read 0.02 \
   --steps 300 --bs 32 --policy-lr 0.01 \
   --gradcheck-batch 4 --preview-k 4
 
-"$PY" -m novbts.report.make_kse_figs
+"$PY" -m novbts.research.report.make_kse_figs
 mkdir -p "$NOVBTS_DOCS_DIR/kse2026/figs"
 cp -a "$NOVBTS_RUNS_DIR/phase5/gt_vs_fno_samples.png" \
   "$NOVBTS_DOCS_DIR/kse2026/figs/sensor_gt_vs_fno.png"

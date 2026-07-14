@@ -40,20 +40,20 @@ do
   backup_once "$artifact"
 done
 
-"$PY" -m novbts.operator.fem_benchmark \
+"$PY" -m novbts.research.fno.fem_benchmark \
   --data "$DATA" --n-test 400 --epochs 80 --clf-epochs 40 \
   --modes 12 --lr 0.001 --lambda-cls 0.1 --field-model lr_fno
 
-"$PY" -m novbts.operator.vbts_baselines \
+"$PY" -m novbts.research.fno.vbts_baselines \
   --data "$DATA" --n-test 400 --epochs 80 --modes 12 --lr 0.001 --ksize 31
 
-"$PY" -m novbts.operator.diff_policy \
+"$PY" -m novbts.research.fno.diff_policy \
   --data "$DATA" --train-policy --task servo --field-model lr_fno \
   --n-test 400 --epochs 80 --modes 12 --lr 0.001 \
   --steps 300 --bs 128 --policy-lr 0.01 --lambda-reg 0 \
   --es-pop 32 --es-sigma 0.02 --log-every 10 --n-seeds 3
 
-"$PY" -m novbts.sensor.sensor_inverse_demo \
+"$PY" -m novbts.simulation.sensor.sensor_inverse_demo \
   --data "$DATA" --field-model lr_fno \
   --n-test 400 --epochs 80 --modes 12 --lr 0.001 \
   --px 160 --sensor-marker-side 11 --marker-placement pixel_even \
@@ -64,7 +64,7 @@ done
   --inverse-n-per-mode 5 --inverse-restarts 8 \
   --inverse-min-shear-frac 0.01
 
-"$PY" -m novbts.sensor.tactile_env \
+"$PY" -m novbts.simulation.sensor.tactile_env \
   --demo --data "$DATA" --field-model lr_fno \
   --n-test 400 --epochs 80 --modes 12 --lr 0.001 \
   --sensor-side 11 --px 64 --reward-mode image --noise-read 0.02 \

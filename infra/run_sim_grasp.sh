@@ -8,6 +8,26 @@ PY="${PY:-.venv-gate2/bin/python}"
 SUB="${1:-}"
 shift || true
 
+# Ctrl-C used to hang: `docker run` proxies SIGINT to Kit, which ignores it, so the
+# CLI keeps waiting and the container survives holding the GPU. Record the container
+# id and stop it ourselves. Docker does not remove a cidfile on --rm, so clear it first.
+CIDFILE="${TMPDIR:-/tmp}/run_sim_grasp_$$.cid"
+stop_container() {
+  local cid
+  [ -f "$CIDFILE" ] || return 0
+  cid="$(cat "$CIDFILE" 2>/dev/null || true)"
+  rm -f "$CIDFILE"
+  [ -n "$cid" ] || return 0
+  docker stop -t 5 "$cid" >/dev/null 2>&1 || true
+}
+on_signal() {
+  echo "[run_sim_grasp] interrupted; stopping Isaac container" >&2
+  stop_container
+  exit 130
+}
+trap on_signal INT TERM
+trap stop_container EXIT
+
 # Persist Isaac's Kit/RTX/compute caches across `docker run --rm` (the image ships
 # them empty). Measured on this box (boot = launch -> first progress line):
 #   rendering run (--livestream/--world-camera): cold 261 s -> warm 109 s, cache 399 MB
@@ -38,7 +58,7 @@ DOCKER_BASE=(docker run --rm --gpus all
 
 chown_back() {
   docker run --rm -v "$PWD":/work --entrypoint bash "$IMG" \
-    -c "chown -R $(id -u):$(id -g) /work/data/assets /work/runs/sim_grasp /work/*_progress.txt 2>/dev/null || true" >/dev/null 2>&1 || true
+    -c "chown -R $(id -u):$(id -g) /work/data/assets /work/runs/sim_grasp /work/runs/sim_sensor /work/*_progress.txt 2>/dev/null || true" >/dev/null 2>&1 || true
 }
 
 gate_marker() {
@@ -77,14 +97,14 @@ PY
 case "$SUB" in
   check)
     rm -f sim_grasp_asset_progress.txt
-    timeout "${TIMEOUT:-600}" "${DOCKER_BASE[@]}" /work/src/novbts/sim/build_robot_asset.py --check-only "$@"
+    timeout "${TIMEOUT:-600}" "${DOCKER_BASE[@]}" /work/src/novbts/simulation/runtime/build_robot_asset.py --check-only "$@"
     chown_back
     gate_marker CHECK_OK sim_grasp_asset_progress.txt || exit 1
     gate_json data/assets/asset_check.json || exit 1
     ;;
   build-asset)
     rm -f sim_grasp_asset_progress.txt
-    timeout "${TIMEOUT:-1200}" "${DOCKER_BASE[@]}" /work/src/novbts/sim/build_robot_asset.py "$@"
+    timeout "${TIMEOUT:-1200}" "${DOCKER_BASE[@]}" /work/src/novbts/simulation/runtime/build_robot_asset.py "$@"
     chown_back
     gate_marker ASSET_BUILD_OK sim_grasp_asset_progress.txt || exit 1
     gate_json data/assets/ur3e_robotiq_vbts.json || exit 1
@@ -92,7 +112,7 @@ case "$SUB" in
     ;;
   verify-asset)
     rm -f sim_grasp_asset_progress.txt
-    timeout "${TIMEOUT:-900}" "${DOCKER_BASE[@]}" /work/src/novbts/sim/build_robot_asset.py --verify "$@"
+    timeout "${TIMEOUT:-900}" "${DOCKER_BASE[@]}" /work/src/novbts/simulation/runtime/build_robot_asset.py --verify "$@"
     chown_back
     gate_marker ASSET_VERIFY_OK sim_grasp_asset_progress.txt || exit 1
     gate_json data/assets/asset_verify.json || exit 1
@@ -179,7 +199,16 @@ case "$SUB" in
       fi
     fi
     rm -f sim_grasp_demo_progress.txt
-    timeout "$demo_timeout" "${docker_base[@]}" /work/src/novbts/sim/grasp_demo.py --mode "$mode" "${driver_args[@]}"
+    # --cidfile goes after `docker run`, never after "$IMG" (it would become a
+    # container argument). Both docker_base branches start with `docker run`.
+    rm -f "$CIDFILE"
+    docker_base=("${docker_base[@]:0:2}" --cidfile "$CIDFILE" "${docker_base[@]:2}")
+    # Background + wait, not foreground: bash defers a trap until the current
+    # foreground command returns, so an INT during a foreground `docker run`
+    # would never reach on_signal. `wait` is interruptible.
+    timeout "$demo_timeout" "${docker_base[@]}" /work/src/novbts/simulation/runtime/grasp_demo.py --mode "$mode" "${driver_args[@]}" &
+    wait $! || true
+    stop_container
     chown_back
     if [ "$mode" = "pick" ]; then
       gate_marker GRASP_DEMO_OK sim_grasp_demo_progress.txt || exit 1
@@ -194,8 +223,72 @@ case "$SUB" in
     test -n "$latest" || exit 1
     gate_npz "$latest/sequence.npz" || exit 1
     ;;
+  sensor)
+    # The standalone sensor driver is interactive by default.  It shares only
+    # Docker/cache/signal plumbing with the grasp runner; its progress file and
+    # outputs remain isolated under sim_sensor.
+    livestream_mode=0
+    prev=""
+    sensor_drive="script"
+    sensor_tag="sensor_script"
+    for arg in "$@"; do
+      if [ "$prev" = "--livestream" ]; then
+        livestream_mode="$arg"
+      fi
+      if [ "$prev" = "--drive" ]; then
+        sensor_drive="$arg"
+      fi
+      if [ "$prev" = "--tag" ]; then
+        sensor_tag="$arg"
+      fi
+      prev="$arg"
+    done
+    docker_base=("${DOCKER_BASE[@]}")
+    sensor_timeout="${TIMEOUT:-3600}"
+    if [ "$livestream_mode" != "0" ]; then
+      livestream_network="${LIVESTREAM_NETWORK:-host}"
+      public_ip="${PUBLIC_IP:-127.0.0.1}"
+      docker_base=(docker run --rm --gpus all
+        -e ACCEPT_EULA=Y -e OMNI_KIT_ACCEPT_EULA=YES
+        -e LIVESTREAM="$livestream_mode" -e PUBLIC_IP="$public_ip")
+      if [ "$livestream_network" = "host" ]; then
+        docker_base+=(--network host)
+      else
+        docker_base+=(-p 8211:8211/tcp -p 8211:8211/udp -p 49100:49100/tcp -p 47998:47998/udp)
+      fi
+      if [ "$livestream_mode" = "1" ]; then
+        ls_display="${LIVESTREAM_DISPLAY:-${DISPLAY:-}}"
+        if [ -z "$ls_display" ]; then
+          ls_display=":$(ls /tmp/.X11-unix/ 2>/dev/null | sed 's/X//' | head -1)"
+        fi
+        if [ -n "$ls_display" ] && [ -S "/tmp/.X11-unix/X${ls_display#:}" ]; then
+          xauth_file="${XAUTHORITY:-$HOME/.Xauthority}"
+          docker_base+=(-e DISPLAY="$ls_display" -v /tmp/.X11-unix:/tmp/.X11-unix
+            -e XAUTHORITY="${XAUTHORITY:-/tmp/xauth}")
+          if [ -f "$xauth_file" ]; then
+            docker_base+=(-v "$xauth_file":/tmp/xauth)
+          fi
+        else
+          echo "[run_sim_grasp] WARNING: no X display found for native sensor livestream." >&2
+        fi
+      fi
+      docker_base+=(-v "$PWD":/work "${CACHE_MOUNTS[@]}" --entrypoint /isaac-sim/python.sh "$IMG")
+    fi
+    rm -f sim_sensor_progress.txt "$CIDFILE"
+    docker_base=("${docker_base[@]:0:2}" --cidfile "$CIDFILE" "${docker_base[@]:2}")
+    timeout "$sensor_timeout" "${docker_base[@]}" /work/src/novbts/simulation/runtime/sensor_demo.py --runtime isaac "$@" &
+    wait $! || true
+    stop_container
+    chown_back
+    if [ "$sensor_drive" = "script" ]; then
+      gate_marker SENSOR_DEMO_OK sim_sensor_progress.txt || exit 1
+      gate_npz "runs/sim_sensor/$sensor_tag/sensor_sequence.npz" || exit 1
+    else
+      gate_marker SENSOR_INTERACTIVE_EXIT sim_sensor_progress.txt || exit 1
+    fi
+    ;;
   *)
-    echo "usage: bash infra/run_sim_grasp.sh check|build-asset|verify-asset|demo [press|pick] [args...]" >&2
+    echo "usage: bash infra/run_sim_grasp.sh check|build-asset|verify-asset|demo [press|pick]|sensor [args...]" >&2
     exit 2
     ;;
 esac

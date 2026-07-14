@@ -11,7 +11,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from novbts.groundtruth.uniform_shift_diagnostic import field_metrics  # noqa: E402
+from novbts.research.groundtruth.uniform_shift_diagnostic import field_metrics  # noqa: E402
 
 
 DATA = ROOT / "data/uipc/shear_res24_avg_swept_REALISTIC_BC.npz"

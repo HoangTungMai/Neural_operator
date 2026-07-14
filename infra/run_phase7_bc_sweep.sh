@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 IMG="${IMG:-isaac-lab-tacex:latest}"
 PY="${PY:-.venv-gate2/bin/python}"
 OUT_ROOT="${OUT_ROOT:-data/uipc/phase7_bc_sweep}"
-SCRIPT="/work/src/novbts/groundtruth/tacex_uipc_extract_shear.py"
+SCRIPT="/work/src/novbts/research/groundtruth/tacex_uipc_extract_shear.py"
 STRENGTHS="${STRENGTHS:-100 300 1000 3000 10000}"
 INCLUDE_FIXED="${INCLUDE_FIXED:-1}"
 
@@ -125,7 +125,7 @@ fi
 rtk proxy docker run --rm -v "$PWD":/work --entrypoint bash "$IMG" \
   -c "chown -R $(id -u):$(id -g) /work/$OUT_ROOT" >/dev/null 2>&1
 
-rtk proxy "$PY" -m novbts.groundtruth.uniform_shift_diagnostic \
+rtk proxy "$PY" -m novbts.research.groundtruth.uniform_shift_diagnostic \
   --root "$OUT_ROOT" \
   --cases-json "$OUT_ROOT/cases.json" \
   --out-json "$OUT_ROOT/summary.json" \

@@ -14,7 +14,7 @@ Sequencing (low-risk/high-value first → riskiest last):
 
 ## 6a — Differentiable tactile ENV wrapper (pure Python, runnable now) [FRAMEWORK CORE]
 Package FNO + sensor + control into one usable API/env — this is what makes it a "framework".
-- New `src/novbts/sensor/tactile_env.py`: a Gym-style single-step contextual env (honest: FNO is a
+- New `src/novbts/simulation/sensor/tactile_env.py`: a Gym-style single-step contextual env (honest: FNO is a
   static one-step map, so step() is contextual, not multi-step dynamics).
   - `reset()` → samples a context (object μ,E,R + target tactile state); returns observation =
     rendered marker image (+ optional flow).
@@ -25,7 +25,7 @@ Package FNO + sensor + control into one usable API/env — this is what makes it
 - Integrate the Phase-4 policy: a demo that runs the trained PolicyMLP in the env.
 - Reuse: `FNOField`/`params_to_fieldinput` (field2field), `markercam.*`, `diff_policy.PolicyMLP`,
   the frozen-FNO setup pattern. Output: `runs/phase6/env_demo.json` + a rollout preview PNG.
-- Verify: `python -m novbts.sensor.tactile_env --demo` runs reset/step, reward improves under the
+- Verify: `python -m novbts.simulation.sensor.tactile_env --demo` runs reset/step, reward improves under the
   Phase-4 policy vs random action; differentiable_step passes a gradcheck (grad flows to action).
 
 ## 6b — Sensor realism + sim2real scaffold (pure Python, runnable now)
@@ -61,8 +61,8 @@ Generalise beyond the sphere indentor.
   marker field + sensor render look sensible; then a tiny sweep merged via `aggregate_sweep.py`.
 
 ## Critical files
-- NEW: `src/novbts/sensor/tactile_env.py`, `sensor/realism.py` (or extend markercam), `sensor/calibration.py`, `sensor/temporal.py`
-- MODIFY: `src/novbts/groundtruth/isaac_extract_shear.py` (--save-trajectory, --indentor-geom/--indentor-mesh)
+- NEW: `src/novbts/simulation/sensor/tactile_env.py`, `sensor/realism.py` (or extend markercam), `sensor/calibration.py`, `sensor/temporal.py`
+- MODIFY: `src/novbts/research/groundtruth/isaac_extract_shear.py` (--save-trajectory, --indentor-geom/--indentor-mesh)
 - REUSE: `field2field.py`, `markercam.py`, `diff_policy.py` (PolicyMLP), `aggregate_sweep.py`, `paths.py`
 - Docker: `isaac-lab-fem` / `isaac-lab-tacex` via `infra/gen_fem_sweep.sh` pattern (volume `-v $PWD:/work`, chown fix)
 - Out: `runs/phase6/`, data under `data/fem/` (trajectory/object variants)

@@ -44,7 +44,7 @@ while true; do
 done
 
 echo "RECOVER_AGGREGATE_BOLT_HEX $(date -Is)"
-"$PY" -m novbts.groundtruth.aggregate_uipc_replicates \
+"$PY" -m novbts.research.groundtruth.aggregate_uipc_replicates \
   --sweep-dir data/uipc/geom_ood/mesh/bolt_hex/sweep \
   --out data/uipc/geom_ood/mesh/bolt_hex/bolt_hex_avg.npz \
   --mode-shear-scale 0.001 --expect-reps 3 --test-size 100 --shuffle-seed 3026
